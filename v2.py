@@ -65,7 +65,7 @@ class Head(nn.Module):
         q = self.query(x) # (B, T, C)
         k = self.key(x) # (B, T, C)
 
-        wei = q @ k.transpose(-2, -1) # (B, T, C) @ (B, C, T) -> (B, T, T)
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5 # (B, T, C) @ (B, C, T) -> (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         wei = F.softmax(wei, dim=-1) 
         wei = self.dropout(wei)
@@ -177,7 +177,7 @@ def estimate_loss():
 model = BigramLanguageModel()
 model = model.to(device)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
 loss_list = []
 for epoch_i in tqdm(range(MAX_ITERS)):
