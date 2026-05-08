@@ -193,6 +193,8 @@ for epoch_i in tqdm(range(MAX_ITERS)):
     loss.backward()
     optimizer.step()
 
+torch.save(model.state_dict(), "model.pt")
+
 context = torch.zeros((1,1),dtype=torch.long, device=device)
 completion = decode(model.generate(context, max_new_tokens=500)[0].tolist())
 print(completion)
