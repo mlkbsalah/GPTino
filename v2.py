@@ -15,7 +15,7 @@ N_EMBED = 384
 N_HEADS = 6
 N_LAYER = 6
 DROPOUT = 0.2
-device = "mps" if torch.backends.mps.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Device set to {device}")
 
 torch.manual_seed(42)
