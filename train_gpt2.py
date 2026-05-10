@@ -73,11 +73,12 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, self.n_embd // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.n_embd // self.n_head).transpose(1, 2)
 
-        wei = q @ k.transpose(-2, -1) * (k.shape[-1] ** -0.5)  # (B, n_head, T, T)
-        wei = wei.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
-        wei = F.softmax(wei, dim=-1)
+        # att = q @ k.transpose(-2, -1) * (k.shape[-1] ** -0.5)  # (B, n_head, T, T)
+        # att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+        # att = F.softmax(wei, dim=-1)
+        # out = wei @ v  # (B, n_head, T, T) @ (B, n_head, T, hs) -> (B, n_head, T, hs)
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
 
-        out = wei @ v  # (B, n_head, T, T) @ (B, n_head, T, hs) -> (B, n_head, T, hs)
         out = out.transpose(1, 2).contiguous().view(B, T, C)
         out = self.c_proj(out)
 
