@@ -247,28 +247,55 @@ class DataLoaderLite:
 
 if __name__ == "__main__":
     import sys
+    import time
 
     device = get_device()
-    seed_everything(42, device)
+    seed_everything(1337, device)
 
-    train_loader = DataLoaderLite(B=4, T=32)
+    train_loader = DataLoaderLite(B=16, T=1024)
 
-    model = GPT(GPTConfig())
+    torch.set_float32_matmul_precision("high")
+
+    model = GPT(GPTConfig(vocab_size=50304))
+    model.to(device)
+    model = torch.compile(model)
     print(f"Model has {sum(p.numel() for p in model.parameters())}")
 
-    model.to(device)
+    max_lr = 6e-4
+    min_lr = max_lr * 0.1
+    warmup_steps = 10
+    max_steps = 50
+    def get_lr(step):
+        if step < warmup_steps:
+            return max_lr * ((step + 1) / warmup_steps)
+        if step > max_steps:
+             return min_lr
+        decay_ratio = (step - warmup_steps) / (max_steps - warmup_steps)
+        assert 0 <= decay_ratio <= 1
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return min_lr + coeff * (max_lr - min_lr)
+        
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-    for i in range(50):
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+    for step in range(50):
+        t0 = time.time()
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        logits, loss = model(x, y)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
         loss.backward()
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        lr = get_lr(step)
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr
         optimizer.step()
-        print(f"step {i}, loss: {loss.item()}")
-
-    sys.exit(0)
+        torch.cuda.synchronize()
+        t1 = time.time()
+        dt = (t1-t0) * 1000
+        tokens_per_second = (train_loader.B * train_loader.T) / (t1-t0)
+        print(f"step {step:5d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}")
 
     enc = tiktoken.get_encoding("gpt2")
     model.eval()
