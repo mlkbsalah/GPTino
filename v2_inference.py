@@ -21,8 +21,10 @@ vocab_size = len(unique_chars)
 stoi = {ch: i for i, ch in enumerate(unique_chars)}
 itos = {i: ch for i, ch in enumerate(unique_chars)}
 
+
 def encode(string):
     return [stoi[c] for c in string]
+
 
 def decode(index):
     return "".join([itos[i] for i in index])
