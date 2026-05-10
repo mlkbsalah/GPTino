@@ -1,3 +1,5 @@
 *.pdf
 .venv/
 play.ipynb
+.vscode/
+tiktoken/
