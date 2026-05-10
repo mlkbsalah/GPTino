@@ -3,6 +3,11 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import tiktoken
+import math
+import os
+
+tiktoken_cache_dir = "/workdir/bensalama/GPTino/tiktoken/"
+os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
 
 
 def get_device():
