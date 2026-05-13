@@ -3,3 +3,4 @@
 play.ipynb
 .vscode/
 tiktoken/
+.DS_Store

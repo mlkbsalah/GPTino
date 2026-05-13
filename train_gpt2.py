@@ -215,6 +215,23 @@ class GPT(nn.Module):
 
         return model
 
+    def configure_optimizer(self, weight_decay, learning_rate, device):
+        param_dict = {
+            name: param
+            for name, param in self.named_parameters()
+            if param.requires_grad
+        }
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        non_decay_param = [p for n, p in param_dict.items() if p.dim() < 1]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": non_decay_param, "weights_decay": 0.0},
+        ]
+        optimizer = torch.optim.AdamW(
+            optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=True
+        )
+        return optimizer
+
 
 class DataLoaderLite:
     def __init__(self, B, T):
@@ -246,7 +263,6 @@ class DataLoaderLite:
 
 
 if __name__ == "__main__":
-    import sys
     import time
 
     device = get_device()
@@ -265,19 +281,20 @@ if __name__ == "__main__":
     min_lr = max_lr * 0.1
     warmup_steps = 10
     max_steps = 50
+
     def get_lr(step):
         if step < warmup_steps:
             return max_lr * ((step + 1) / warmup_steps)
         if step > max_steps:
-             return min_lr
+            return min_lr
         decay_ratio = (step - warmup_steps) / (max_steps - warmup_steps)
         assert 0 <= decay_ratio <= 1
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return min_lr + coeff * (max_lr - min_lr)
-        
 
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+    optimizer = model.configure_optimizer(
+        weight_decay=0.1, learning_rate=6e-4, device=device
+    )
     for step in range(50):
         t0 = time.time()
         x, y = train_loader.next_batch()
@@ -293,9 +310,11 @@ if __name__ == "__main__":
         optimizer.step()
         torch.cuda.synchronize()
         t1 = time.time()
-        dt = (t1-t0) * 1000
-        tokens_per_second = (train_loader.B * train_loader.T) / (t1-t0)
-        print(f"step {step:5d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}")
+        dt = (t1 - t0) * 1000
+        tokens_per_second = (train_loader.B * train_loader.T) / (t1 - t0)
+        print(
+            f"step {step:5d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}"
+        )
 
     enc = tiktoken.get_encoding("gpt2")
     model.eval()
