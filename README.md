@@ -1,7 +1,5 @@
 # GPTino
 
-Building a GPT chat from start to finish.
-
 ## Understanding the transformer architecture
 
 ### The masked multihead attention
@@ -59,5 +57,21 @@ $\rightarrow$ **173 toks (x2.2)**
 - **Aligned tensor shapes:** Padding dimensions to multiples of 64 or 128 so GPU matmul kernels use their fastest code path. E.g., padding `vocab_size` from 50257 to 50304. 
 $\rightarrow$ **174 tok/s (x1.01)**
 
+### Multi GPU training
 
+#### Data parallel
+
+Instead of feeding all the batch at onces we feed it in smaller bit and have each bit run on a device. So model is copied across device and ran all over them. In perfect conditions (where overhead from parallelizing is nothing) the expected speedup is N times. This is easy to do with a single line and doesn't require the change of architecture. Given that the batch is split and that we want to do gradient steps on the whole batch, we need to reduce all to spread the gradient updates across gpus. so generally one single reduce operation is enough.
+
+When model is too big data parallel is not enough and one forward can't be performed even with a barch size of one. In that case the model needs to be divided into bits stored independently on each GPU. 
+
+#### Model parallel
+
+Now instead of spliting according to batches we split the parameter models instead of running one layer of size N on one GPU we run two GPUs with N//2 layers. This solves the problem we talked about before of model being too big to fit in memory. 
+Since the memory complexity is linear in batch size and quadratic in model parameters it's more beneficial to do model paralllel for big model. 
+The downside is that the model has to be rewriteen to fit the pradigm. Also since we divide the model bits (we're actually dividing the matrix multiplications) we need to reduce every time there is a matrix multiplication. Which make the usage of model parallel much more tricky.
+
+### Sidenotes:
+
+When we have a model with a certain number of params (1M) during training the model takes approximatively 4 times more space since pytorch stores gradients and optimizer keeps momentums. So for example training a 4B parameter model is will take the space of around 4 times that size. 
 
