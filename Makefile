@@ -1,13 +1,14 @@
-PROJECT_CONTAINER_NAME = gptino
+CONTAINER_NAME = gptino
+PROJECT_DIR = ~/repos/GPTino
 
 build-docker:
-	docker build --platform linux/amd64 -t $(PROJECT_CONTAINER_NAME):latest .
-	docker save $(PROJECT_CONTAINER_NAME):latest -o $(PROJECT_CONTAINER_NAME).tar
+	docker build --platform linux/amd64 -t $(CONTAINER_NAME):latest .
+	docker save $(CONTAINER_NAME):latest -o $(CONTAINER_NAME).tar
 
 send:
-	rsync -avz --progress $(PROJECT_CONTAINER_NAME).tar m-ben-salah@172.18.47.81:~/repos/awesome-gpu/
+	rsync -avz --progress $(CONTAINER_NAME).tar m-ben-salah@172.18.47.81:${PROJECT_DIR}/
 
 build-and-send: build-docker send
 
 build-apptainer:
-	apptainer build $(PROJECT_CONTAINER_NAME).sif docker-archive://$(PROJECT_CONTAINER_NAME).tar
+	apptainer build $(CONTAINER_NAME).sif docker-archive://$(CONTAINER_NAME).tar

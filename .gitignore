@@ -6,3 +6,6 @@ tiktoken/
 .DS_Store
 modules.sh
 fineweb-edu-tokenized/
+Dockerfile
+.ruff_cache/
+gptino.tar
