@@ -7,8 +7,8 @@ import math
 import numpy as np
 import os
 
-tiktoken_cache_dir = "/workdir/bensalama/GPTino/tiktoken/"
-os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
+# tiktoken_cache_dir = "/workdir/bensalama/GPTino/tiktoken/"
+# os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
 
 
 
@@ -237,7 +237,7 @@ class GPT(nn.Module):
 
 def load_tokens(filename):
     np_tokens = np.load(filename)
-    torch_tokens = torch.from_numpy(np_tokens)
+    torch_tokens = torch.tensor(np_tokens, dtype=torch.long)
     return torch_tokens
 
 class DataLoaderLite:
@@ -248,7 +248,7 @@ class DataLoaderLite:
         self.world_size = world_size
         assert split in {"train", "val"}    
 
-        data_root = "/workdir/bensalama/GPTino/fineweb-edu-tokenized/"
+        data_root = "/home/m-ben-salah/repos/GPTino/fineweb-edu-tokenized/"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
@@ -269,9 +269,7 @@ class DataLoaderLite:
 
     def next_batch(self):
         B, T = self.B, self.T
-        buf = self.tokens[
-            self.tokens[self.current_position : self.current_position + B * T + 1]
-        ]
+        buf = self.tokens[self.current_position : self.current_position + B * T + 1]
         x = buf[:-1].view(B, T)
         y = buf[1:].view(B, T)
         self.current_position += B * T * self.world_size
@@ -348,9 +346,9 @@ if __name__ == "__main__":
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return min_lr + coeff * (max_lr - min_lr)
 
-    optimizer = model.configure_optimizer(
+    optimizer = raw_model.configure_optimizer(
         weight_decay=0.1, learning_rate=6e-4, device=device
-    ) # type: ignore
+    )
 
     for step in range(max_steps):
         t0 = time.time()

@@ -9,3 +9,5 @@ fineweb-edu-tokenized/
 Dockerfile
 .ruff_cache/
 gptino.tar
+*.pt
+*.sif
