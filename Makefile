@@ -12,3 +12,6 @@ build-and-send: build-docker send
 
 build-apptainer:
 	apptainer build $(CONTAINER_NAME).sif docker-archive://$(CONTAINER_NAME).tar
+
+run-interactive:
+	apptainer shell --nv $(CONTAINER_NAME).sif
