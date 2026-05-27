@@ -309,9 +309,10 @@ if __name__ == "__main__":
         print(f"Running on {ddp_world_size} processes. DDP: {ddp}")
 
     seed_everything(1337, device)
+    
 
     total_batch_size = 524288 # 2**19
-    B = 16 # micro batch size per GPU
+    B = 64 # micro batch size per GPU
     T = 1024
     assert total_batch_size % (B * T * ddp_world_size) == 0, "total batch size must be divisible by micro batch size and world size"
     grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
@@ -325,7 +326,7 @@ if __name__ == "__main__":
 
     model = GPT(GPTConfig(vocab_size=50304))
     model.to(device)
-    model = torch.compile(model)
+    # model = torch.compile(model)
     if ddp:
         model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module if ddp else model
@@ -353,6 +354,7 @@ if __name__ == "__main__":
     for step in range(max_steps):
         t0 = time.time()
 
+        # validation
         if step % 100 == 0:
             model.eval()
             val_loader.reset()
@@ -371,7 +373,7 @@ if __name__ == "__main__":
             if master_process:
                 print(f"step {step:5d} | val loss: {val_loss_accum:.6f}")
 
-
+        # sample from the model
         if step > 0 and step % 100 == 0:
             model.eval()
             num_return_sequences = 4
@@ -397,9 +399,7 @@ if __name__ == "__main__":
                 decoded = enc.decode(tokens)
                 print(f"rank {ddp_rank} | sample {i}: {decoded}")
 
-
-
-
+        # training step
         model.train()
         optimizer.zero_grad()
         loss_accum = 0.0
@@ -409,7 +409,7 @@ if __name__ == "__main__":
             with torch.autocast(device_type=device, dtype=torch.bfloat16):
                 logits, loss = model(x, y)
             loss = loss / grad_accum_steps
-            loss_accum += loss.item()
+            loss_accum += loss.detach()
             if ddp:
                 raw_model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
             loss.backward()
