@@ -310,6 +310,7 @@ if __name__ == "__main__":
 
     seed_everything(1337, device)
     
+    enc = tiktoken.get_encoding("gpt2")
 
     total_batch_size = 524288 # 2**19
     B = 64 # micro batch size per GPU
