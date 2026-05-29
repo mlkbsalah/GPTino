@@ -12,3 +12,5 @@ gptino.tar
 *.pt
 *.sif
 Dockerfile
+hellaswag/
+__pycache__/
