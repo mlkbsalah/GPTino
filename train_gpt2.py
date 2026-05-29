@@ -246,7 +246,7 @@ class DataLoaderLite:
         self.T = T
         self.process_rank = process_rank
         self.world_size = world_size
-        assert split in {"train", "val"}    
+        assert split in {"train", "val"} 
 
         data_root = "/home/m-ben-salah/repos/GPTino/fineweb-edu-tokenized/"
         shards = os.listdir(data_root)
@@ -283,6 +283,7 @@ class DataLoaderLite:
 
 if __name__ == "__main__":
     import time
+    from datetime import datetime
 
     from torch.distributed import init_process_group, destroy_process_group
     from torch.nn.parallel import DistributedDataParallel as DDP
@@ -327,7 +328,7 @@ if __name__ == "__main__":
 
     model = GPT(GPTConfig(vocab_size=50304))
     model.to(device)
-    # model = torch.compile(model)
+    model = torch.compile(model)
     if ddp:
         model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module if ddp else model
@@ -336,7 +337,7 @@ if __name__ == "__main__":
     max_lr = 6e-4
     min_lr = max_lr * 0.1
     warmup_steps = 715
-    max_steps = 3
+    max_steps = 19000
 
     def get_lr(step):
         if step < warmup_steps:
@@ -391,14 +392,14 @@ if __name__ == "__main__":
                     logits = logits[:, -1, :]  # (B, vocab)
                     probs = F.softmax(logits, dim=-1)  # (B, vocab)
                     topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)  # (B, 50)
-                    ix = torch.multinomial(topk_probs, 1)  # (B,1)
+                    ix = torch.multinomial(topk_probs, 1, generator=sample_rng)  # (B,1)
                     xcol = torch.gather(topk_indices, -1, ix)
                     x = torch.cat((x, xcol), dim=-1)  # (B, length+1)
 
             for i in range(num_return_sequences):
                 tokens = x[i].tolist()
                 decoded = enc.decode(tokens)
-                print(f"rank {ddp_rank} | sample {i}: {decoded}")
+                print(f"rank {ddp_rank} | sample {i}: {decoded} \n {'-'*80}")
 
         # training step
         model.train()
@@ -412,7 +413,7 @@ if __name__ == "__main__":
             loss = loss / grad_accum_steps
             loss_accum += loss.detach()
             if ddp:
-                raw_model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
+                model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
             loss.backward()
         if ddp:
             dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
@@ -430,8 +431,10 @@ if __name__ == "__main__":
                 f"step {step:5d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}"
             )
 
-    if ddp:
-        destroy_process_group()
+    if master_process:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        torch.save(raw_model.state_dict(), f"GPT2-model_{timestamp}.pt")
 
-    
-    torch.save(model.state_dict(), "GPT2-model.pt")
+    if ddp:
+        dist.barrier()
+        destroy_process_group()
