@@ -6,6 +6,7 @@ import tiktoken
 from train_gpt2 import GPT
 from tqdm import tqdm
 
+
 enc = tiktoken.get_encoding("gpt2")
 
 
@@ -67,9 +68,32 @@ def evaluate(model, device):
 
 
 if __name__ == "__main__":
-    device = set_device()
-    model = GPT.from_pretrained("gpt2")
-    model.eval()
+    from torch.distributed import init_process_group
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    import os
+
+    ddp = os.environ.get("RANK", None) is not None
+    if ddp:
+        assert torch.cuda.is_available(), "DDP requires CUDA"
+        init_process_group(backend="nccl")
+        ddp_rank = int(os.environ["RANK"])
+        ddp_local_rank = int(os.environ["LOCAL_RANK"])
+        ddp_world_size = int(os.environ["WORLD_SIZE"])
+        device = f"cuda:{ddp_local_rank}"
+        torch.cuda.set_device(device)
+        master_process = ddp_rank == 0
+    else:
+        device = set_device()
+        ddp_rank = 0
+        ddp_world_size = 1
+        master_process = True
+    if master_process:
+        print(f"Running on {ddp_world_size} processes. DDP: {ddp}")
+
+    model = DDP(GPT.from_pretrained("gpt2"))
+    raw_model = model.module if ddp else model
+    raw_model.eval()
+
     with torch.no_grad():
         avg_loss = evaluate(model, device)
     print(f"Average loss: {avg_loss.item():.4f}")
