@@ -1,7 +1,6 @@
 import torch.nn.functional as F
 import torch
-import numpy as np
-from datasets import load_dataset
+import pandas as pd
 import tiktoken
 from train_gpt2 import GPT
 from tqdm import tqdm
@@ -20,7 +19,14 @@ def set_device():
     return device
 
 
+def iterate_dataset():
+    df = pd.read_parquet("./hellaswag/validation-00000-of-00001.parquet")
+    for _, row in df.iterrows():
+        yield row[["activity_label", "ctx", "endings", "label"]]
+
+
 def render_example(example):  ## Change the return to tensors
+    label = example["label"]
     ctx_tokens = enc.encode(example["ctx"])
     token_list = []
     mask_list = []
@@ -38,18 +44,17 @@ def render_example(example):  ## Change the return to tensors
         tokens[i, : len(tok)] = torch.tensor(tok)
         mask[i, : len(mk)] = torch.tensor(mk)
 
-    return tokens, mask
+    return tokens, mask, label
 
 
 def evaluate(model, device):
     model.to(device)
-    losses = []
 
-    ds = load_dataset("Rowan/hellaswag", split="test").select_columns(
-        ["activity_label", "ctx", "endings"]
-    )
-    for example in tqdm(ds):
-        tokens, mask = render_example(example)
+    total_examples = 0
+    acc_sum = 0
+
+    for example in tqdm(iterate_dataset()):
+        tokens, mask, label = render_example(example)
         tokens = tokens.to(device)
         mask = mask.to(device)
 
@@ -58,13 +63,25 @@ def evaluate(model, device):
         tokens = tokens[:, 1:].contiguous()
 
         loss = F.cross_entropy(
-            logits.view(-1, logits.shape[-1]), tokens.view(-1), reduce=False
+            logits.view(-1, logits.shape[-1]), tokens.view(-1), reduction="none"
         )
         loss = loss.view(tokens.shape[0], -1) * mask[:, 1:]
-        loss = loss.sum() / mask[:, 1:].sum()
+        avg_loss = loss.sum(dim=1) / mask[:, 1:].sum(dim=1)
 
-        losses.append(loss.detach())
-    return np.mean(losses)
+        prediction = avg_loss.argmin().item()
+
+        total_examples += 1
+        acc_sum += int(prediction == label)
+        print(
+            f"Current Accuracy ({total_examples}): {acc_sum}/{total_examples}={acc_sum / total_examples:.4f}"
+        )
+
+        while total_examples < 5:
+            print("-" * 20)
+            print("Context:", example["ctx"])
+            for i, end in enumerate(example["endings"]):
+                print(f"loss {avg_loss[i].item():.4f} : {end}")
+            print(f"Predicted: {prediction}, Label: {label}")
 
 
 if __name__ == "__main__":
@@ -90,10 +107,12 @@ if __name__ == "__main__":
     if master_process:
         print(f"Running on {ddp_world_size} processes. DDP: {ddp}")
 
-    model = DDP(GPT.from_pretrained("gpt2"))
+    model = GPT.from_pretrained("gpt2")
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module if ddp else model
-    raw_model.eval()
 
+    model.eval()
     with torch.no_grad():
-        avg_loss = evaluate(model, device)
-    print(f"Average loss: {avg_loss.item():.4f}")
+        accuracy = evaluate(model, device)
+    print(f"Accuracy: {accuracy:.4f}")
