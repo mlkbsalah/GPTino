@@ -11,3 +11,4 @@ Dockerfile
 gptino.tar
 *.pt
 *.sif
+Dockerfile
