@@ -164,11 +164,21 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
         return logits, loss
+    
+    def generate(self, start, max_new_tokens):
+        idx = start
+        for _ in range(max_new_tokens):
+            logits, _ = self(idx)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+        return idx
 
     @classmethod
-    def from_pretrained(cls, model_type):
+    def from_pretrained(cls, model_type): ## no internet acess on the cluster to download the weights from huggingface, so we have to load them from a local directory where we have saved the weights using the transformers library
         """Loads pretrained GPT-2 model weights from huggingface"""
-        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
+        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"} 
         from transformers import GPT2LMHeadModel
 
         print("loading weights from pretrained gpt: %s" % model_type)
@@ -189,7 +199,7 @@ class GPT(nn.Module):
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
 
         # init a huggingface/transformers model
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
+        model_hf = GPT2LMHeadModel.from_pretrained("./GPT2/") 
         sd_hf = model_hf.state_dict()
 
         # copy while ensuring all of the parameters are aligned and match in names and shapes

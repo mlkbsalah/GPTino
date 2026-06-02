@@ -26,7 +26,7 @@ def iterate_dataset():
 
 
 def render_example(example):  ## Change the return to tensors
-    label = example["label"]
+    label = int(example["label"])
     ctx_tokens = enc.encode(example["ctx"])
     token_list = []
     mask_list = []
@@ -72,11 +72,12 @@ def evaluate(model, device):
 
         total_examples += 1
         acc_sum += int(prediction == label)
-        print(
-            f"Current Accuracy ({total_examples}): {acc_sum}/{total_examples}={acc_sum / total_examples:.4f}"
-        )
+        if total_examples % 100 == 0:
+            print(
+                f"Current Accuracy ({total_examples}): {acc_sum}/{total_examples}={acc_sum / total_examples:.4f}"
+            )
 
-        while total_examples < 5:
+        if total_examples < 5:
             print("-" * 20)
             print("Context:", example["ctx"])
             for i, end in enumerate(example["endings"]):
@@ -114,5 +115,4 @@ if __name__ == "__main__":
 
     model.eval()
     with torch.no_grad():
-        accuracy = evaluate(model, device)
-    print(f"Accuracy: {accuracy:.4f}")
+        evaluate(raw_model, device)
