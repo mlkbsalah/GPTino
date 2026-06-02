@@ -15,3 +15,5 @@ Dockerfile
 hellaswag/
 __pycache__/
 GPT2/
+tiny-shakespeare/
+logs/
