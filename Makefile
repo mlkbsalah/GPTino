@@ -1,4 +1,4 @@
-CONTAINER_NAME = gptino
+CONTAINER_NAME = train_gym
 PROJECT_DIR = ~/repos/GPTino
 
 build-docker:
