@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
@@ -9,7 +10,6 @@ import os
 
 # tiktoken_cache_dir = "/workdir/bensalama/GPTino/tiktoken/"
 # os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
-
 
 
 def get_device():
@@ -117,12 +117,12 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(
-            dict(
-                wte=nn.Embedding(config.vocab_size, config.n_embd),
-                wpe=nn.Embedding(config.block_size, config.n_embd),
-                h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-                ln_f=nn.LayerNorm(config.n_embd),
-            )
+            {
+                "wte": nn.Embedding(config.vocab_size, config.n_embd),
+                "wpe": nn.Embedding(config.block_size, config.n_embd),
+                "h": nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+                "ln_f": nn.LayerNorm(config.n_embd),
+            }
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
@@ -164,7 +164,7 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
         return logits, loss
-    
+
     def generate(self, start, max_new_tokens):
         idx = start
         for _ in range(max_new_tokens):
@@ -176,9 +176,11 @@ class GPT(nn.Module):
         return idx
 
     @classmethod
-    def from_pretrained(cls, model_type): ## no internet acess on the cluster to download the weights from huggingface, so we have to load them from a local directory where we have saved the weights using the transformers library
+    def from_pretrained(
+        cls, model_type
+    ):  ## no internet acess on the cluster to download the weights from huggingface, so we have to load them from a local directory where we have saved the weights using the transformers library
         """Loads pretrained GPT-2 model weights from huggingface"""
-        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"} 
+        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
         from transformers import GPT2LMHeadModel
 
         print("loading weights from pretrained gpt: %s" % model_type)
@@ -199,7 +201,7 @@ class GPT(nn.Module):
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
 
         # init a huggingface/transformers model
-        model_hf = GPT2LMHeadModel.from_pretrained("./GPT2/") 
+        model_hf = GPT2LMHeadModel.from_pretrained("./GPT2/")
         sd_hf = model_hf.state_dict()
 
         # copy while ensuring all of the parameters are aligned and match in names and shapes
@@ -250,13 +252,14 @@ def load_tokens(filename):
     torch_tokens = torch.tensor(np_tokens, dtype=torch.long)
     return torch_tokens
 
+
 class DataLoaderLite:
     def __init__(self, B, T, process_rank, world_size, split):
         self.B = B
         self.T = T
         self.process_rank = process_rank
         self.world_size = world_size
-        assert split in {"train", "val"} 
+        assert split in {"train", "val"}
 
         data_root = "/home/m-ben-salah/repos/GPTino/fineweb-edu-tokenized/"
         shards = os.listdir(data_root)
@@ -299,16 +302,20 @@ if __name__ == "__main__":
     from torch.nn.parallel import DistributedDataParallel as DDP
     import torch.distributed as dist
 
-    ddp = int(os.environ.get('RANK', -1)) != -1 # if RANK does not exist we get -1 and ddp i false
+    ddp = (
+        int(os.environ.get("RANK", -1)) != -1
+    )  # if RANK does not exist we get -1 and ddp i false
     if ddp:
         assert torch.cuda.is_available()
-        init_process_group(backend='nccl')
-        ddp_rank = int(os.environ['RANK'])
-        ddp_local_rank = int(os.environ['LOCAL_RANK'])
-        ddp_world_size = int(os.environ['WORLD_SIZE'])
-        device = f'cuda:{ddp_local_rank}'
+        init_process_group(backend="nccl")
+        ddp_rank = int(os.environ["RANK"])
+        ddp_local_rank = int(os.environ["LOCAL_RANK"])
+        ddp_world_size = int(os.environ["WORLD_SIZE"])
+        device = f"cuda:{ddp_local_rank}"
         torch.cuda.set_device(device)
-        master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+        master_process = (
+            ddp_rank == 0
+        )  # this process will do logging, checkpointing etc.
     else:
         # vanilla, non-DDP run
         ddp_rank = 0
@@ -320,19 +327,27 @@ if __name__ == "__main__":
         print(f"Running on {ddp_world_size} processes. DDP: {ddp}")
 
     seed_everything(1337, device)
-    
+
     enc = tiktoken.get_encoding("gpt2")
 
-    total_batch_size = 524288 # 2**19
-    B = 64 # micro batch size per GPU
+    total_batch_size = 524288  # 2**19
+    B = 64  # micro batch size per GPU
     T = 1024
-    assert total_batch_size % (B * T * ddp_world_size) == 0, "total batch size must be divisible by micro batch size and world size"
+    assert total_batch_size % (B * T * ddp_world_size) == 0, (
+        "total batch size must be divisible by micro batch size and world size"
+    )
     grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
     if master_process:
-        print(f"total batch size: {total_batch_size} | micro batch size: {B} | grad accum steps: {grad_accum_steps}")
+        print(
+            f"total batch size: {total_batch_size} | micro batch size: {B} | grad accum steps: {grad_accum_steps}"
+        )
 
-    train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, world_size=ddp_world_size, split="train")
-    val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, world_size=ddp_world_size, split="val")
+    train_loader = DataLoaderLite(
+        B=B, T=T, process_rank=ddp_rank, world_size=ddp_world_size, split="train"
+    )
+    val_loader = DataLoaderLite(
+        B=B, T=T, process_rank=ddp_rank, world_size=ddp_world_size, split="val"
+    )
 
     torch.set_float32_matmul_precision("high")
 
@@ -342,7 +357,6 @@ if __name__ == "__main__":
     if ddp:
         model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module if ddp else model
-
 
     max_lr = 6e-4
     min_lr = max_lr * 0.1
@@ -409,7 +423,7 @@ if __name__ == "__main__":
             for i in range(num_return_sequences):
                 tokens = x[i].tolist()
                 decoded = enc.decode(tokens)
-                print(f"rank {ddp_rank} | sample {i}: {decoded} \n {'-'*80}")
+                print(f"rank {ddp_rank} | sample {i}: {decoded} \n {'-' * 80}")
 
         # training step
         model.train()
@@ -423,7 +437,7 @@ if __name__ == "__main__":
             loss = loss / grad_accum_steps
             loss_accum += loss.detach()
             if ddp:
-                model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
+                model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
             loss.backward()
         if ddp:
             dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
@@ -435,7 +449,9 @@ if __name__ == "__main__":
         torch.cuda.synchronize()
         t1 = time.time()
         dt = (t1 - t0) * 1000
-        tokens_per_second = (train_loader.B * train_loader.T * train_loader.world_size) / (t1 - t0)
+        tokens_per_second = (
+            train_loader.B * train_loader.T * train_loader.world_size
+        ) / (t1 - t0)
         if master_process:
             print(
                 f"step {step:5d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}"
