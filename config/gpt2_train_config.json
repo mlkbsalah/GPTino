@@ -1,0 +1,46 @@
+{
+    "model": {
+        "n_layer": 12,
+        "n_head": 12,
+        "n_embd": 768,
+        "vocab_size": 50304,
+        "block_size": 1024
+    },
+    "data": {
+        "data_dir": "/Users/malek/repos/GPTino/data/fineweb-edu-tokenized/"
+    },
+    "training": {
+        "seed": 1337,
+        "micro_batch_size": 4,
+        "total_batch_size": 524288,
+        "max_steps": 10000,
+        "val_loss_steps": 20,
+        "lr_scheduler": {
+            "max_lr": 6e-4,
+            "min_lr": 6e-5,
+            "warmup_steps": 1000,
+            "decay_steps": 10000
+        },
+        "optimizer": {
+            "weight_decay": 0.1,
+            "grad_clip_norm": 1.0
+        },
+        "logging": {
+            "log_interval": 100,
+            "sample_interval": 500,
+            "save_interval": 1000
+        },
+        "sample": {
+            "prompt": "Hello, I'm a language model,",
+            "num_return_sequences": 2,
+            "max_length": 1050,
+            "top_k": 50
+        }
+    },
+    "debug": {
+        "max_steps": 5,
+        "log_interval": 1,
+        "sample_interval": 2,
+        "val_loss_steps": 2
+    }
+}

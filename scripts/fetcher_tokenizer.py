@@ -1,9 +1,11 @@
 from __future__ import annotations
-from datasets import load_dataset
-import tiktoken
-import os
-import numpy as np
+
 import multiprocessing
+import os
+
+import numpy as np
+import tiktoken
+from datasets import load_dataset
 from tqdm import tqdm
 
 tiktoken_cache_dir = "/workdir/bensalama/GPTino/tiktoken/"
@@ -14,7 +16,7 @@ eot = enc._special_tokens["<|endoftext|>"]
 OUTPUT_DIR = "/workdir/bensalama/GPTino/fineweb-edu-tokenized/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-shard_size = 100_000_000
+SHARD_SIZE = 100_000_000
 
 
 def tokenize(doc):
@@ -38,18 +40,17 @@ if __name__ == "__main__":
     ).select_columns(["text"])
 
     n_processes = os.cpu_count() - 1
-    # import sys; sys.exit(0)
 
     with multiprocessing.Pool(n_processes) as pool:
         shard_idx = 0
         tokens_count = 0
-        all_tokens = np.empty((shard_size,), dtype=np.uint16)
+        all_tokens = np.empty((SHARD_SIZE,), dtype=np.uint16)
         progress_bar = None
 
         for tokens in pool.imap(tokenize, ds["text"], chunksize=16):
-            while len(tokens) + tokens_count > shard_size:
-                remainder = shard_size - tokens_count
-                all_tokens[tokens_count:shard_size] = tokens[:remainder]
+            while len(tokens) + tokens_count > SHARD_SIZE:
+                remainder = SHARD_SIZE - tokens_count
+                all_tokens[tokens_count:SHARD_SIZE] = tokens[:remainder]
                 progress_bar.update(remainder)
                 split = "val" if shard_idx == 0 else "train"
                 filename = os.path.join(
@@ -65,7 +66,7 @@ if __name__ == "__main__":
             all_tokens[tokens_count : tokens_count + len(tokens)] = tokens
             tokens_count += len(tokens)
             if progress_bar is None:
-                progress_bar = tqdm(total=shard_size, desc=f"Shard {shard_idx:06d}")
+                progress_bar = tqdm(total=SHARD_SIZE, desc=f"Shard {shard_idx:06d}")
             progress_bar.update(len(tokens))
 
         if tokens_count > 0:
