@@ -16,7 +16,7 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from gptino.data.dataloader import DataLoaderLite
-from gptino.module.gpt2 import GPT, GPTConfig
+from gptino.module.gpt import GPT, GPTConfig
 
 CONFIG_PATH = "/Users/malek/repos/GPTino/config/gpt2_train_config.json"
 
