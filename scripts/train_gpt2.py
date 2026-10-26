@@ -6,7 +6,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import Path
 
 import tiktoken
 import torch
@@ -18,7 +18,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from gptino.data.dataloader import DataLoaderLite
 from gptino.module.gpt import GPT, GPTConfig
 
-CONFIG_PATH = "/Users/malek/repos/GPTino/config/gpt2_train_config.json"
+CONFIG_PATH = "config/gpt2_train_config.json"
 
 
 @dataclass
@@ -37,7 +37,8 @@ class TrainConfig:
     decay_steps: int
     weight_decay: float
     grad_clip_norm: float
-    log_interval: int
+    val_log_interval: int
+    train_log_interval: int
     sample_interval: int
     save_interval: int
     save_checkpoints: bool
@@ -51,6 +52,9 @@ def load_config(path=CONFIG_PATH):
     with open(path) as f:
         return json.load(f)
 
+def save_config(cfg: TrainConfig, path):
+    with open(path, "w") as f:
+        json.dump(cfg.__dict__, f, indent=4)
 
 def load_train_config(path, debug, world_size):
     raw = load_config(path)
@@ -75,7 +79,8 @@ def load_train_config(path, debug, world_size):
         decay_steps=lr["decay_steps"],
         weight_decay=optimizer["weight_decay"],
         grad_clip_norm=optimizer["grad_clip_norm"],
-        log_interval=logging["log_interval"],
+        val_log_interval=logging["val_log_interval"],
+        train_log_interval=logging["train_log_interval"],
         sample_interval=logging["sample_interval"],
         save_interval=logging["save_interval"],
         save_checkpoints=True,
@@ -89,7 +94,8 @@ def load_train_config(path, debug, world_size):
         debug_cfg = raw["debug"]
         cfg.max_steps = debug_cfg["max_steps"]
         cfg.val_loss_steps = debug_cfg["val_loss_steps"]
-        cfg.log_interval = debug_cfg["log_interval"]
+        cfg.val_log_interval = debug_cfg["val_log_interval"]
+        cfg.train_log_interval = debug_cfg["train_log_interval"]
         cfg.sample_interval = debug_cfg["sample_interval"]
         cfg.total_batch_size = cfg.micro_batch_size * cfg.seq_len * world_size
         cfg.save_checkpoints = False
@@ -97,6 +103,7 @@ def load_train_config(path, debug, world_size):
     assert (
         cfg.total_batch_size % (cfg.micro_batch_size * cfg.seq_len * world_size) == 0
     ), "total batch size must be divisible by micro batch size and world size"
+
     return cfg
 
 
@@ -119,6 +126,22 @@ def seed_everything(seed, device):
         torch.mps.manual_seed(seed)
 
 
+def save_checkpoint(path, raw_model, optimizer, step, cfg, train_loader):
+    torch.save(
+        {
+            "model": raw_model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "step": step,
+            "config": cfg.__dict__,
+            "loader": {
+                "shard": train_loader.current_shard,
+                "position": train_loader.current_position,
+            },
+        },
+        path,
+    )
+
+
 def setup_ddp():
     ddp = int(os.environ.get("RANK", -1)) != -1
     if ddp:
@@ -139,11 +162,17 @@ def setup_ddp():
     return ddp, ddp_rank, ddp_local_rank, ddp_world_size, master_process, device
 
 
-def main(debug=False):
+def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("./unlogged_runs")):
+    checkpoint_dir = run_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    val_metrics_path = run_dir / "val_metrics.jsonl"
+    train_metrics_path = run_dir / "train_metrics.jsonl"
+    latest_path = checkpoint_dir / "latest.pt"
+
+    samples_path = run_dir / "samples.txt"
+
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, master_process, device = setup_ddp()
-    cfg = load_train_config(CONFIG_PATH, debug, ddp_world_size)
-    if master_process:
-        print(f"Running on {ddp_world_size} processes. DDP: {ddp}")
+    cfg = load_train_config(config_path, debug, ddp_world_size)
 
     seed_everything(cfg.seed, device)
 
@@ -152,10 +181,13 @@ def main(debug=False):
     B = cfg.micro_batch_size
     T = cfg.seq_len
     grad_accum_steps = cfg.total_batch_size // (B * T * ddp_world_size)
+
     if master_process:
-        print(
-            f"total batch size: {cfg.total_batch_size} | micro batch size: {B} | grad accum steps: {grad_accum_steps}"
-        )
+        save_config(cfg, run_dir / "train_config.json")
+        print(f"Running on {ddp_world_size} processes. DDP: {ddp}")
+        print(f"total batch size: {cfg.total_batch_size} | micro batch size: {B} | grad accum steps: {grad_accum_steps}")
+        if debug:
+            print("Running in debug mode. No checkpoints will be saved.")
 
     train_loader = DataLoaderLite(
         data_dir=cfg.data_dir,
@@ -176,15 +208,20 @@ def main(debug=False):
         master_process=master_process,
     )
 
-    torch.set_float32_matmul_precision("high")
 
+    torch.set_float32_matmul_precision("high")
     model = GPT(GPTConfig(**cfg.model))
+    raw_model = model
     model.to(device)
     if device == "cuda":
         model = torch.compile(model)
     if ddp:
         model = DDP(model, device_ids=[ddp_local_rank])
-    raw_model = model.module if ddp else model
+
+    # MFU: fwd+bwd FLOPs per token (weights + attention) vs. GPU peak
+    n_params = sum(p.numel() for p in raw_model.parameters())
+    flops_per_token = 6 * n_params + 12 * cfg.model["n_layer"] * cfg.model["n_embd"] * T
+    PEAK_FLOPS = 989e12  # H100 SXM bf16 dense (H100 PCIe: 756e12)
 
     def get_lr(step):
         if step < cfg.warmup_steps:
@@ -202,12 +239,9 @@ def main(debug=False):
         device=device,
     )  # type: ignore
 
-    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     for step in range(cfg.max_steps):
-        t0 = time.time()
-
         # validation
-        if step % cfg.log_interval == 0:
+        if step % cfg.val_log_interval == 0:
             model.eval()
             val_loader.reset()
             with torch.no_grad():
@@ -222,6 +256,8 @@ def main(debug=False):
             if ddp:
                 dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
             if master_process:
+                with open(val_metrics_path, "a") as f:
+                    f.write(json.dumps({"step": step, "val_loss": val_loss_accum.item()}) + "\n")
                 print(f"step {step:5d} | val loss: {val_loss_accum:.6f}")
 
         # sample from the model
@@ -249,8 +285,12 @@ def main(debug=False):
                 tokens = x[i].tolist()
                 decoded = enc.decode(tokens)
                 print(f"rank {ddp_rank} | sample {i}: {decoded} \n {'-' * 80}")
+                if master_process:
+                    with open(samples_path, "a") as f:
+                        f.write(f" step {step} | rank {ddp_rank} | sample {i}: {decoded}\n{'-' * 80}\n")
 
-        # training step
+        # training step (timed alone, so val/sampling don't skew tok/sec)
+        t0 = time.time()
         model.train()
         optimizer.zero_grad()
         loss_accum = 0.0
@@ -277,11 +317,17 @@ def main(debug=False):
         t1 = time.time()
         dt = (t1 - t0) * 1000
         tokens_per_second = (
-            train_loader.B * train_loader.T * train_loader.world_size
+            train_loader.B * train_loader.T * grad_accum_steps * train_loader.world_size
         ) / (t1 - t0)
-        if master_process and step % cfg.log_interval == 0:
+        if master_process and step % cfg.train_log_interval == 0:
+            on_cuda = "cuda" in device
+            mfu = tokens_per_second * flops_per_token / (PEAK_FLOPS * ddp_world_size) if on_cuda else None
+            mem_gb = torch.cuda.max_memory_allocated(device) / 1e9 if on_cuda else None
+            with open(train_metrics_path, "a") as f:
+                f.write(json.dumps({"step": step, "loss": loss_accum.item(), "lr": lr, "norm": norm.item(), "dt": dt, "tokens_per_second": tokens_per_second, "mfu": mfu, "peak_mem_gb": mem_gb})+ "\n")
             print(
-                f"step {step:5d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}"
+                f"step {step:5d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_second:,.0f}"
+                + (f" | mfu: {mfu:.1%} | mem: {mem_gb:.1f}GB" if on_cuda else "")
             )
 
         if (
@@ -290,12 +336,18 @@ def main(debug=False):
             and step > 0
             and step % cfg.save_interval == 0
         ):
-            torch.save(
-                raw_model.state_dict(), f"GPT2-model_step{step}_{run_timestamp}.pt"
-            )
+            checkpoint_path = checkpoint_dir / f"step_{step}.pt"
+            save_checkpoint(checkpoint_path, raw_model, optimizer, step, cfg, train_loader)
+            latest_path.unlink(missing_ok=True)
+            latest_path.symlink_to(checkpoint_path.name)
+            
+
 
     if cfg.save_checkpoints and master_process:
-        torch.save(raw_model.state_dict(), f"GPT2-model_{run_timestamp}.pt")
+        checkpoint_path = checkpoint_dir / f"step_{cfg.max_steps - 1}.pt"
+        save_checkpoint(checkpoint_path, raw_model, optimizer, cfg.max_steps - 1, cfg, train_loader)
+        latest_path.unlink(missing_ok=True)
+        latest_path.symlink_to(checkpoint_path.name)
 
     if ddp:
         dist.barrier()
@@ -309,5 +361,20 @@ if __name__ == "__main__":
         action="store_true",
         help="short run with validation and sampling, no checkpoints",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=CONFIG_PATH,
+        help="path to the training configuration file",
+    )
+
+    parser.add_argument(
+        "--run_dir",
+        type=Path,
+        required=True,
+        help="directory to save logs and checkpoints",
+    )
+    
+
     args = parser.parse_args()
-    main(debug=args.debug)
+    main(debug=args.debug, config_path=args.config, run_dir=args.run_dir)
