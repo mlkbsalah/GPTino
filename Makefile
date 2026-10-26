@@ -6,7 +6,7 @@ build-docker:
 	docker save $(CONTAINER_NAME):latest -o $(CONTAINER_NAME).tar
 
 send:
-	rsync -avz --progress $(CONTAINER_NAME).tar m-ben-salah@172.18.47.81:${PROJECT_DIR}/
+	rsync -avz --progress $(CONTAINER_NAME).tar m-ben-salah@172.18.47.92:${PROJECT_DIR}/
 
 build-and-send: build-docker send
 
