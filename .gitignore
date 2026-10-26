@@ -6,12 +6,10 @@ tiktoken/
 .DS_Store
 modules.sh
 fineweb-edu-tokenized/
-Dockerfile
 .ruff_cache/
 gptino.tar
 *.pt
 *.sif
-Dockerfile
 hellaswag/
 __pycache__/
 GPT2/
@@ -19,3 +17,4 @@ tiny-shakespeare/
 logs/
 *.tar    
 config/
+runs/
