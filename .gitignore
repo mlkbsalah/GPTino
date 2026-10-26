@@ -18,3 +18,4 @@ GPT2/
 tiny-shakespeare/
 logs/
 *.tar    
+config/
