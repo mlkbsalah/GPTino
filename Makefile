@@ -20,4 +20,10 @@ build-apptainer:
 
 
 run-interactive:
-	apptainer shell --nv $(CONTAINER_NAME).sif
+	srun --job-name=run-interactive \
+		--time=30:00 \
+		--mem=24G \
+		--cpus-per-task=12 \
+		--partition=ai \
+		--gres=gpu:h100:1 \
+		--pty apptainer shell --nv $(CONTAINER_NAME).sif
