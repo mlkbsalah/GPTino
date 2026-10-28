@@ -12,7 +12,7 @@ build-and-send: build-docker send
 
 build-apptainer:
 	sbatch --job-name=build-apptainer \
-		--time=30:00 \
+		--time=1:00:00 \
 		--mem=24G \
 		--cpus-per-task=12 \
 		--partition=ai \
@@ -21,9 +21,10 @@ build-apptainer:
 
 run-interactive:
 	srun --job-name=run-interactive \
-		--time=30:00 \
+		--time=1:00:00 \
 		--mem=24G \
 		--cpus-per-task=12 \
+		--nodes=2 \
 		--partition=ai \
-		--gres=gpu:h100:1 \
+		--gres=gpu:h100:2 \
 		--pty apptainer shell --nv $(CONTAINER_NAME).sif

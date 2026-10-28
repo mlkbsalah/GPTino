@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=TrainGPT
 #SBATCH --output=runs/.slurm/%j.out
-#SBATCH --time=10:00:00
+#SBATCH --time=24:00:00
 #SBATCH --partition=ai
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:2
 #SBATCH --mem=36G
@@ -46,6 +46,6 @@ srun apptainer exec --nv --env PYTHONPATH=src ${IMAGE} \
             --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
             --rdzv_id=gpt2_job_${SLURM_JOB_ID} \
             scripts/train_gpt2.py \
-                --run_dir ${RUN_DIR}
-
+                --run_dir ${RUN_DIR} \
+                
 [ $? -eq 0 ] && write_meta completed || write_meta failed
