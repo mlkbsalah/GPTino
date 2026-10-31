@@ -18,7 +18,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from gptino.data.dataloader import DataLoaderLite
 from gptino.module.gpt import GPT, GPTConfig
 
-CONFIG_PATH = "config/gpt2_train_config.json"
+CONFIG_PATH = "config/gpt2_train_config.yaml"
 
 
 @dataclass
@@ -60,11 +60,11 @@ class DDPContext:
 
 def load_config(path=CONFIG_PATH):
     with open(path) as f:
-        return json.load(f)
+        return yaml.safe_load(f)
 
 def save_config(cfg: TrainConfig, path):
     with open(path, "w") as f:
-        json.dump(cfg.__dict__, f, indent=4)
+        yaml.dump(cfg.__dict__, f, default_flow_style=False)
 
 def load_train_config(path, debug, world_size):
     raw = load_config(path)
