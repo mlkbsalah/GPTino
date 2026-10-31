@@ -45,7 +45,7 @@ srun apptainer exec --nv --env PYTHONPATH=src ${IMAGE} \
             --rdzv_backend=c10d \
             --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
             --rdzv_id=gpt2_job_${SLURM_JOB_ID} \
-            scripts/train_gpt2.py \
+            scripts/train_gpt.py \
                 --run_dir ${RUN_DIR} \
                 
 [ $? -eq 0 ] && write_meta completed || write_meta failed
