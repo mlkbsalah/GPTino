@@ -11,7 +11,7 @@ from .decoder_layer import Block
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024
+    context_length: int = 1024
     vocab_size: int = 50257
     n_layer: int = 12
     n_head: int = 12
@@ -26,17 +26,14 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(
             {
                 "wte": nn.Embedding(config.vocab_size, config.n_embd),
-                "wpe": nn.Embedding(config.block_size, config.n_embd),
+                "wpe": nn.Embedding(config.context_length, config.n_embd),
                 "h": nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 "ln_f": nn.LayerNorm(config.n_embd),
             }
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        # Shared weight betwwen token encoder and lm_head
         self.transformer["wte"].weight = self.lm_head.weight
-
-        # GPT-2 paper initialization
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -50,31 +47,23 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
-        # idx is of shape (B: batch size, T: sequence length)
+    def forward(self, idx):
         _, T = idx.size()
-        assert T <= self.config.block_size, (
-            f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
+        assert T <= self.config.context_length, (
+            f"Cannot forward sequence of length {T}, context length is only {self.config.context_length}"
         )
-        # forward the token and posisition embeddings
-        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)  # shape (T)
-        pos_emb = self.transformer["wpe"](
-            pos
-        )  # position embeddings of shape (T, n_embd)
-        tok_emb = self.transformer["wte"](
-            idx
-        )  # token embeddings of shape (B, T, n_embd)
-        x = tok_emb + pos_emb[None, :, :]
-        # forward the blocks of the transformer
-        for block in self.transformer["h"]:  # type: ignore
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        pos_emb = self.transformer["wpe"](pos)  
+        tok_emb = self.transformer["wte"](idx)  
+        x = tok_emb + pos_emb[None, :, :] # broadcast to (B, T, C) and add 
+
+        for block in self.transformer["h"]:
             x = block(x)
-        # forward the final layernorm and the classifier
+
         x = self.transformer["ln_f"](x)
-        logits = self.lm_head(x)  # (B, T, vocab_size)
-        loss = None
-        if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-        return logits, loss
+        logits = self.lm_head(x)
+    
+        return logits
 
     # def training_step():
     #     pass
@@ -82,8 +71,8 @@ class GPT(nn.Module):
     def generate(self, start, max_new_tokens):
         idx = start
         for _ in range(max_new_tokens):
-            idx = idx[:, -self.config.block_size :]
-            logits, _ = self(idx)
+            idx = idx[:, -self.config.context_length :]
+            logits = self(idx)
             logits = logits[:, -1, :]
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
@@ -151,7 +140,7 @@ class GPT(nn.Module):
             if param.requires_grad
         }
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        non_decay_param = [p for n, p in param_dict.items() if p.dim() < 1]
+        non_decay_param = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
             {"params": decay_params, "weight_decay": weight_decay},
             {"params": non_decay_param, "weights_decay": 0.0},

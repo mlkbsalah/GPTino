@@ -13,8 +13,8 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.register_buffer(
             "bias",
-            torch.tril(torch.ones(config.block_size, config.block_size)).view(
-                1, 1, config.block_size, config.block_size
+            torch.tril(torch.ones(config.context_length, config.context_length)).view(
+                1, 1, config.context_length, config.context_length
             ),
         )
 
