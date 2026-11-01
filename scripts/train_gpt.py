@@ -16,7 +16,7 @@ from gptino.module.gpt import GPT, GPTConfig
 from gptino.training.callbacks import CheckpointCallback, LearningRateCallback
 from gptino.training.logger import LoggerLite
 from gptino.training.lr_scheduler import LinearWarmupCosineDecayLR, LRSchedulerConfig
-from gptino.training.trainer import Budget, TrainerLite
+from gptino.training.trainer import TrainerLite
 
 CONFIG_PATH = "config/gpt2_train_config.yaml"
 
@@ -26,31 +26,30 @@ class TrainConfig:
     data_dir: str
     model: dict
     seed: int
+    train_tokens: int
     train_micro_batch_size: int
+    train_batch_size: int
+    val_tokens: int
     val_micro_batch_size: int
     context_length: int
-    train_batch_size: int
-    train_tokens: int
-    val_tokens: int
-    # max_steps: int
-    # val_loss_steps: int
-    
+
     lr_scheduler: dict
-    
+
     weight_decay: float
     grad_clip_norm: float
-    
+
     validation_interval: int
     logging_interval: int
     sample_interval: int
     save_interval: int
     save_checkpoints: bool
-    
+
     sample_prompt: str
     sample_num_sequences: int
     sample_max_length: int
     sample_top_k: int
-    
+
+
 @dataclass
 class DDPContext:
     enabled: bool
@@ -60,9 +59,11 @@ class DDPContext:
     master_process: bool
     device: str
 
+
 def load_config(path=CONFIG_PATH):
     with open(path) as f:
         return yaml.safe_load(f)
+
 
 def load_train_config(path, debug, world_size):
     raw = load_config(path)
@@ -82,18 +83,14 @@ def load_train_config(path, debug, world_size):
         train_batch_size=training["train_batch_size"],
         train_tokens=int(training["train_tokens"]),
         val_tokens=int(training["val_tokens"]),
-        
         lr_scheduler=lr,
-
         weight_decay=optimizer["weight_decay"],
         grad_clip_norm=optimizer["grad_clip_norm"],
-
         validation_interval=logging["validation_interval"],
         logging_interval=logging["logging_interval"],
         sample_interval=logging["sample_interval"],
         save_interval=logging["save_interval"],
         save_checkpoints=True,
-
         sample_prompt=sample["prompt"],
         sample_num_sequences=sample["num_return_sequences"],
         sample_max_length=sample["max_length"],
@@ -101,6 +98,7 @@ def load_train_config(path, debug, world_size):
     )
 
     return cfg
+
 
 def get_device():
     device = "cpu"
@@ -111,6 +109,7 @@ def get_device():
     print(f"using device: {device}")
     return device
 
+
 def seed_everything(seed, device):
     torch.manual_seed(seed)
     if device == "cuda":
@@ -118,7 +117,8 @@ def seed_everything(seed, device):
         torch.cuda.manual_seed_all(seed)
     elif device == "mps":
         torch.mps.manual_seed(seed)
-        
+
+
 def setup_ddp():
     ddp = int(os.environ.get("RANK", -1)) != -1
     if ddp:
@@ -147,74 +147,81 @@ def setup_ddp():
 
 
 def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("runs")):
-
     ddp_context = setup_ddp()
     cfg = load_train_config(config_path, debug, ddp_context.world_size)
     seed_everything(cfg.seed, ddp_context.device)
-
-    budget = Budget(
-        num_val_tokens=cfg.val_tokens,
-        num_train_tokens=cfg.train_tokens,
-        train_batch_size=cfg.train_batch_size,
-        train_micro_batch_size=cfg.train_micro_batch_size,
-        val_micro_batch_size=cfg.val_micro_batch_size,
-        context_length=cfg.context_length,
-        world_size=ddp_context.world_size,
-    )
 
     train_loader = DataLoaderLite(
         data_dir=cfg.data_dir,
         max_tokens=cfg.train_tokens,
         split="train",
-        batch_size_tokens=cfg.train_batch_size // ddp_context.world_size,
+        batch_tokens=cfg.train_batch_size,
         context_length=cfg.context_length,
         process_rank=ddp_context.rank,
         world_size=ddp_context.world_size,
         master_process=ddp_context.master_process,
     )
-
 
     val_loader = DataLoaderLite(
         data_dir=cfg.data_dir,
         max_tokens=cfg.val_tokens,
         split="val",
-        batch_size_tokens=cfg.val_micro_batch_size * cfg.context_length,
+        batch_tokens=cfg.val_micro_batch_size
+        * cfg.context_length
+        * ddp_context.world_size,  # for validation we use what fits on the VRAM
         context_length=cfg.context_length,
         process_rank=ddp_context.rank,
         world_size=ddp_context.world_size,
         master_process=ddp_context.master_process,
     )
+
+    if ddp_context.master_process:
+        print(
+            f"train: {len(train_loader)} steps of {train_loader.batch_tokens} tokens | val: {len(val_loader)} steps of {val_loader.batch_tokens} tokens"
+        )
 
     model = GPT(GPTConfig(**cfg.model))
     model.to(ddp_context.device)
     if ddp_context.enabled:
         model = DDP(model, device_ids=[ddp_context.local_rank])
 
-
-
     optimizer = torch.optim.AdamW(
-        params=[{"params": [p for p in model.parameters() if p.dim() >= 2], "weight_decay": cfg.weight_decay},
-                {"params": [p for p in model.parameters() if p.dim() < 2], "weight_decay": 0.0}],
-        lr=cfg.lr_scheduler["min_lr"], # will be overridden by the scheduler, but we need to set it to something
+        params=[
+            {
+                "params": [p for p in model.parameters() if p.dim() >= 2],
+                "weight_decay": cfg.weight_decay,
+            },
+            {
+                "params": [p for p in model.parameters() if p.dim() < 2],
+                "weight_decay": 0.0,
+            },
+        ],
+        lr=cfg.lr_scheduler[
+            "min_lr"
+        ],  # will be overridden by the scheduler, but we need to set it to something
         betas=(0.9, 0.95),
         eps=1e-8,
         weight_decay=cfg.weight_decay,
     )
 
+    max_steps = len(train_loader)
     lr_scheduler = LinearWarmupCosineDecayLR(
         optimizer=optimizer,
-        cfg=LRSchedulerConfig(**cfg.lr_scheduler),
+        cfg=LRSchedulerConfig(
+            warmup_steps=int(cfg.lr_scheduler["warmup_fraction"] * max_steps),
+            decay_steps=max_steps,
+            min_lr=cfg.lr_scheduler["min_lr"],
+            max_lr=cfg.lr_scheduler["max_lr"],
+        ),
     )
 
     logger = LoggerLite(
-        log_dir=run_dir,
-        ddp_context=ddp_context,
-        logging_interval=cfg.logging_interval
+        log_dir=run_dir, ddp_context=ddp_context, logging_interval=cfg.logging_interval
     )
-    
+
     trainer = TrainerLite(
         model=model,
-        budget=budget,
+        micro_batch_size=cfg.train_micro_batch_size,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         logger=logger,
@@ -222,9 +229,11 @@ def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("runs")):
         validation_interval=cfg.validation_interval,
         gradient_clip_norm=cfg.grad_clip_norm,
         callbacks=[
-            CheckpointCallback(save_dir=run_dir / "checkpoints", save_interval=cfg.save_interval),
+            CheckpointCallback(
+                save_dir=run_dir / "checkpoints", save_interval=cfg.save_interval
+            ),
             LearningRateCallback(),
-        ]
+        ],
     )
 
     trainer.fit(train_loader, val_loader)
@@ -236,9 +245,11 @@ def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("runs")):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_dir",
-                        type=Path,
-                        default="runs/debug/",
-                        help="Directory to save logs and checkpoints")
+    parser.add_argument(
+        "--run_dir",
+        type=Path,
+        default="runs/debug/",
+        help="Directory to save logs and checkpoints",
+    )
     args = parser.parse_args()
     main(run_dir=args.run_dir)
