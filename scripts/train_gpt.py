@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import tiktoken
 import torch
 import torch.distributed as dist
 import yaml
@@ -13,7 +14,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from gptino.data.dataloader import DataLoaderLite
 from gptino.module.gpt import GPT, GPTConfig
-from gptino.training.callbacks import CheckpointCallback, LearningRateCallback
+from gptino.training.callbacks import (
+    CheckpointCallback,
+    CompleteTextCallback,
+    LearningRateCallback,
+)
 from gptino.training.logger import LoggerLite
 from gptino.training.lr_scheduler import LinearWarmupCosineDecayLR, LRSchedulerConfig
 from gptino.training.trainer import TrainerLite
@@ -44,10 +49,7 @@ class TrainConfig:
     save_interval: int
     save_checkpoints: bool
 
-    sample_prompt: str
-    sample_num_sequences: int
-    sample_max_length: int
-    sample_top_k: int
+    sample: dict
 
 
 @dataclass
@@ -91,10 +93,7 @@ def load_train_config(path, debug, world_size):
         sample_interval=logging["sample_interval"],
         save_interval=logging["save_interval"],
         save_checkpoints=True,
-        sample_prompt=sample["prompt"],
-        sample_num_sequences=sample["num_return_sequences"],
-        sample_max_length=sample["max_length"],
-        sample_top_k=sample["top_k"],
+        sample=sample,
     )
 
     return cfg
@@ -231,6 +230,13 @@ def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("runs")):
         callbacks=[
             CheckpointCallback(
                 save_dir=run_dir / "checkpoints", save_interval=cfg.save_interval
+            ),
+            CompleteTextCallback(
+                tokenizer=tiktoken.get_encoding("gpt2"),
+                save_path=run_dir / "sampler.txt",
+                sample_every_n_steps=cfg.sample_interval,
+                seed=cfg.seed,
+                **cfg.sample,
             ),
             LearningRateCallback(),
         ],

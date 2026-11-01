@@ -53,29 +53,33 @@ class GPT(nn.Module):
             f"Cannot forward sequence of length {T}, context length is only {self.config.context_length}"
         )
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
-        pos_emb = self.transformer["wpe"](pos)  
-        tok_emb = self.transformer["wte"](idx)  
-        x = tok_emb + pos_emb[None, :, :] # broadcast to (B, T, C) and add 
+        pos_emb = self.transformer["wpe"](pos)
+        tok_emb = self.transformer["wte"](idx)
+        x = tok_emb + pos_emb[None, :, :]  # broadcast to (B, T, C) and add
 
-        for block in self.transformer["h"]:
+        for block in self.transformer["h"]:  # type: ignore
             x = block(x)
 
         x = self.transformer["ln_f"](x)
         logits = self.lm_head(x)
-    
+
         return logits
 
     # def training_step():
     #     pass
 
-    def generate(self, start, max_new_tokens):
-        idx = start
+    def generate(self, start, max_new_tokens, top_k=None, rng=None):
+        idx = start if start.dim() == 2 else start.unsqueeze(0)
         for _ in range(max_new_tokens):
             idx = idx[:, -self.config.context_length :]
-            logits = self(idx)
-            logits = logits[:, -1, :]
+            logits = self(idx)  # (B, T, C)
+            logits = logits[:, -1, :]  # (B, C)
+            if top_k is not None:
+                top_k_val = torch.topk(logits, top_k, dim=-1)
+                k_th = top_k_val.values[:, -1].unsqueeze(-1)
+                logits = logits.where(logits >= k_th, float("-inf"))
             probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
+            idx_next = torch.multinomial(probs, num_samples=1, generator=rng)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
