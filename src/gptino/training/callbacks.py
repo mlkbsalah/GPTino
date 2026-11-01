@@ -29,24 +29,32 @@ class CheckpointCallback(BaseCallback):
         self.save_interval = save_interval
         self.latest_checkpoint_path = Path(self.save_dir) / "latest.pt"
 
+    def on_train_begin(self, trainer):
+        if trainer.ddp_context.master_process:
+            self.save_dir.mkdir(parents=True, exist_ok=True)
+            self.latest_checkpoint_path.touch(exist_ok=True)
+
     def on_step_end(self, trainer):
         if not trainer.ddp_context.master_process:
             return
-        if trainer.step % self.save_interval == 0 and trainer.step > 0:
-            self.save_dir.mkdir(parents=True, exist_ok=True)
-            checkpoint_path = self.save_dir / f"checkpoint_step_{trainer.step}.pt"
+        completed_steps = trainer.step + 1
+        if completed_steps % self.save_interval == 0 and completed_steps > 0:
+            self._save_checkpoint(trainer, completed_steps)
 
-            torch.save(
-                {
-                    "model_state_dict": trainer.model.state_dict(),
-                    "optimizer_state_dict": trainer.optimizer.state_dict(),
-                    "lr_scheduler_state_dict": trainer.lr_scheduler.state_dict(),
-                    "step": trainer.step,
-                },
-                checkpoint_path,
-            )
-            self.latest_checkpoint_path.unlink(missing_ok=True)
-            self.latest_checkpoint_path.symlink_to(checkpoint_path.name)
+    def _save_checkpoint(self, trainer, step):
+        checkpoint_path = self.save_dir / f"checkpoint_step_{step}.pt"
+        torch.save(
+            {
+                "model_state_dict": trainer.model.state_dict(),
+                "optimizer_state_dict": trainer.optimizer.state_dict(),
+                "lr_scheduler_state_dict": trainer.lr_scheduler.state_dict(),
+                "model_config": trainer.model.config,
+                "step": step,
+            },
+            checkpoint_path,
+        )
+        self.latest_checkpoint_path.unlink(missing_ok=True)
+        self.latest_checkpoint_path.symlink_to(checkpoint_path.name)
 
 
 class LearningRateCallback(BaseCallback):

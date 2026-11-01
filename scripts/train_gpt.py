@@ -67,7 +67,7 @@ def load_config(path=CONFIG_PATH):
         return yaml.safe_load(f)
 
 
-def load_train_config(path, debug, world_size):
+def load_train_config(path):
     raw = load_config(path)
     training = raw["training"]
     lr = training["lr_scheduler"]
@@ -145,9 +145,9 @@ def setup_ddp():
     )
 
 
-def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("runs")):
+def main(config_path=CONFIG_PATH, run_dir=Path("runs")):
     ddp_context = setup_ddp()
-    cfg = load_train_config(config_path, debug, ddp_context.world_size)
+    cfg = load_train_config(config_path)
     seed_everything(cfg.seed, ddp_context.device)
 
     train_loader = DataLoaderLite(
@@ -167,7 +167,7 @@ def main(debug=False, config_path=CONFIG_PATH, run_dir=Path("runs")):
         split="val",
         batch_tokens=cfg.val_micro_batch_size
         * cfg.context_length
-        * ddp_context.world_size,  # for validation we use what fits on the VRAM
+        * ddp_context.world_size,
         context_length=cfg.context_length,
         process_rank=ddp_context.rank,
         world_size=ddp_context.world_size,
