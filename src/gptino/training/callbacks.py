@@ -37,19 +37,24 @@ class CheckpointCallback(BaseCallback):
     def on_step_end(self, trainer):
         if not trainer.ddp_context.master_process:
             return
-        completed_steps = trainer.step + 1
-        if completed_steps % self.save_interval == 0 and completed_steps > 0:
-            self._save_checkpoint(trainer, completed_steps)
+        if trainer.step % self.save_interval == 0 and trainer.step > 0:
+            self._save_checkpoint(trainer)
 
-    def _save_checkpoint(self, trainer, step):
-        checkpoint_path = self.save_dir / f"checkpoint_step_{step}.pt"
+    def on_train_end(self, trainer):
+        if not trainer.ddp_context.master_process:
+            return
+        self._save_checkpoint(trainer)
+
+    def _save_checkpoint(self, trainer):
+        module = getattr(trainer.model, "module", trainer.model)
+        checkpoint_path = self.save_dir / f"checkpoint_step_{trainer.step}.pt"
         torch.save(
             {
-                "model_state_dict": trainer.model.state_dict(),
+                "model_state_dict": module.state_dict(),
                 "optimizer_state_dict": trainer.optimizer.state_dict(),
                 "lr_scheduler_state_dict": trainer.lr_scheduler.state_dict(),
-                "model_config": trainer.model.config,
-                "step": step,
+                "model_config": module.config,
+                "completed_steps": trainer.step,
             },
             checkpoint_path,
         )
@@ -63,7 +68,7 @@ class LearningRateCallback(BaseCallback):
 
     def on_step_begin(self, trainer):
         current_lr = trainer.lr_scheduler.get_last_lr()[0]
-        trainer.logger.log_value(current_lr, "Learning Rate", reduce=False)
+        trainer.record_metric("Learning Rate", current_lr, reduce=False)
 
 
 class TrainSummaryCallback(BaseCallback):

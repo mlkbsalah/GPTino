@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import tiktoken
@@ -23,7 +23,7 @@ from gptino.training.logger import LoggerLite
 from gptino.training.lr_scheduler import LinearWarmupCosineDecayLR, LRSchedulerConfig
 from gptino.training.trainer import TrainerLite
 
-CONFIG_PATH = "config/gpt2_train_config.yaml"
+CONFIG_PATH = "config/gpt_config.yaml"
 
 
 @dataclass
@@ -33,7 +33,7 @@ class TrainConfig:
     seed: int
     train_tokens: int
     train_micro_batch_size: int
-    train_batch_size: int
+    train_batch_tokens: int
     val_tokens: int
     val_micro_batch_size: int
     context_length: int
@@ -82,7 +82,7 @@ def load_train_config(path):
         train_micro_batch_size=training["train_micro_batch_size"],
         val_micro_batch_size=training["val_micro_batch_size"],
         context_length=raw["model"]["context_length"],
-        train_batch_size=training["train_batch_size"],
+        train_batch_tokens=training["train_batch_tokens"],
         train_tokens=int(training["train_tokens"]),
         val_tokens=int(training["val_tokens"]),
         lr_scheduler=lr,
@@ -97,6 +97,21 @@ def load_train_config(path):
     )
 
     return cfg
+
+
+def debug_config(cfg: TrainConfig, world_size: int) -> TrainConfig:
+    batch_tokens = 2 * cfg.train_micro_batch_size * cfg.context_length * world_size
+    return replace(
+        cfg,
+        train_batch_tokens=batch_tokens,
+        train_tokens=2 * batch_tokens,
+        val_tokens=cfg.val_micro_batch_size * cfg.context_length * world_size,
+        validation_interval=1,
+        logging_interval=1,
+        sample_interval=1,
+        save_checkpoints=False,
+        sample={**cfg.sample, "n_samples": 1, "max_new_tokens": 16},
+    )
 
 
 def get_device():
@@ -145,16 +160,24 @@ def setup_ddp():
     )
 
 
-def main(config_path=CONFIG_PATH, run_dir=Path("runs")):
+def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False):
     ddp_context = setup_ddp()
     cfg = load_train_config(config_path)
+    if debug:
+        cfg = debug_config(cfg, ddp_context.world_size)
+        if ddp_context.master_process:
+            print(
+                "Debug mode: 2 optimizer steps, 2 micro-batches per rank per step, "
+                "1 validation batch per rank, logging and sampling every step, "
+                "checkpoints disabled."
+            )
     seed_everything(cfg.seed, ddp_context.device)
 
     train_loader = DataLoaderLite(
         data_dir=cfg.data_dir,
         max_tokens=cfg.train_tokens,
         split="train",
-        batch_tokens=cfg.train_batch_size,
+        batch_tokens=cfg.train_batch_tokens,
         context_length=cfg.context_length,
         process_rank=ddp_context.rank,
         world_size=ddp_context.world_size,
@@ -197,7 +220,7 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs")):
         ],
         lr=cfg.lr_scheduler[
             "min_lr"
-        ],  # will be overridden by the scheduler, but we need to set it to something
+        ],  # will be overwritten by the scheduler, but we need to set it to something
         betas=(0.9, 0.95),
         eps=1e-8,
         weight_decay=cfg.weight_decay,
@@ -257,5 +280,10 @@ if __name__ == "__main__":
         default="runs/debug/",
         help="Directory to save logs and checkpoints",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Run two optimizer steps with validation, sampling, and logging every step",
+    )
     args = parser.parse_args()
-    main(run_dir=args.run_dir)
+    main(run_dir=args.run_dir, debug=args.debug)

@@ -1,6 +1,9 @@
 import contextlib
-from .callbacks import TrainSummaryCallback
+
 import torch
+import torch.distributed as dist
+
+from .callbacks import TrainSummaryCallback
 
 
 class TrainerLite:
@@ -31,6 +34,7 @@ class TrainerLite:
         self.micro_batch_size = micro_batch_size
 
         self.step = 0
+        self.raw_model = model if not self.ddp else model.module
 
     def _run_callbacks(self, event_name, **kwargs):
         for callback in self.callbacks:
@@ -38,29 +42,50 @@ class TrainerLite:
 
     def fit(self, train_dataloader, validation_dataloader):
         self._run_callbacks("on_train_begin")
-        max_steps = len(train_dataloader)
-        for step, batch in enumerate(train_dataloader):
-            self.step = step
-            if (step % self.validation_interval == 0) or (step == max_steps - 1):
-                self._run_callbacks("on_validation_begin")
-                self.model.eval()
-                val_loss = self.evaluate(validation_dataloader)
-                self.logger.log_value(val_loss, "Validation Loss", reduce=True)
-                self._run_callbacks("on_validation_end")
 
+        for batch in train_dataloader:
             self._run_callbacks("on_step_begin")
+
             self.model.train()
             batch_loss = self.train_batch(batch)
-            self._run_callbacks("on_step_end")
+            self.step += 1
 
-            self.logger.log_value(batch_loss, "Training Loss", reduce=True)
-            self.logger.step()
+            self.record_metric("Training Loss", batch_loss, reduce=True)
+
+            if (self.step % self.validation_interval == 0) or (
+                self.step == len(train_dataloader)
+            ):
+                self._run_callbacks("on_validation_begin")
+
+                self.model.eval()
+                val_loss = self.evaluate(validation_dataloader)
+
+                self.record_metric("Validation Loss", val_loss, reduce=True)
+                self._run_callbacks("on_validation_end")
+
+            self._run_callbacks("on_step_end")
+            self.record_metric("Step", self.step, reduce=False)
+            self.flush_metrics()
 
         self._run_callbacks("on_train_end")
 
+    def record_metric(self, name, value, reduce=True):
+        if self.ddp and reduce:
+            dist.all_reduce(value, op=dist.ReduceOp.AVG)
+        if self.ddp_context.master_process:
+            self.logger.log_value(value, name)
+
+    def flush_metrics(self):
+        if (
+            self.ddp_context.master_process
+            and self.step % self.logger.logging_interval == 0
+        ):
+            self.logger.write_metrics()
+        self.logger.flush()
+
     def train_batch(self, batch):
         self.optimizer.zero_grad()
-        loss_accum = 0.0
+        loss_accum = torch.zeros(1, device=self.device)
         micro_batches = list(self.micro_batch_generator(batch))
         num_sequences = batch[0].size(0)
         for micro_step, micro_batch in enumerate(micro_batches):
@@ -84,7 +109,7 @@ class TrainerLite:
 
     @torch.no_grad()
     def evaluate(self, val_dataloader):
-        val_loss_accum = 0.0
+        val_loss_accum = torch.zeros(1, device=self.device)
         for batch in val_dataloader:
             loss = self.compute_loss(batch)
             val_loss_accum += loss.detach()

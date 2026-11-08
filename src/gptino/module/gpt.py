@@ -71,8 +71,7 @@ class GPT(nn.Module):
     def generate(self, start, max_new_tokens, top_k=None, rng=None):
         idx = start if start.dim() == 2 else start.unsqueeze(0)
         for _ in range(max_new_tokens):
-            idx = idx[:, -self.config.context_length :]
-            logits = self(idx)  # (B, T, C)
+            logits = self(idx[:, -self.config.context_length :])  # (B, T, C)
             logits = logits[:, -1, :]  # (B, C)
             if top_k is not None:
                 top_k_val = torch.topk(logits, top_k, dim=-1)
@@ -136,20 +135,3 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
-
-    def configure_optimizer(self, weight_decay, learning_rate, device):
-        param_dict = {
-            name: param
-            for name, param in self.named_parameters()
-            if param.requires_grad
-        }
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        non_decay_param = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": weight_decay},
-            {"params": non_decay_param, "weights_decay": 0.0},
-        ]
-        optimizer = torch.optim.AdamW(
-            optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=True
-        )
-        return optimizer

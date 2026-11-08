@@ -14,9 +14,9 @@ class LRSchedulerConfig:
 
 class LinearWarmupCosineDecayLR(torch.optim.lr_scheduler.LRScheduler):
     def __init__(self, optimizer, cfg: LRSchedulerConfig, last_epoch=-1):
-        super().__init__(optimizer, last_epoch)
-        self.optimizer = optimizer
         self.cfg = cfg
+        self.optimizer = optimizer
+        super().__init__(optimizer, last_epoch)
 
     def state_dict(self):
         return {k: v for k, v in super().state_dict().items() if k != "cfg"}
@@ -24,7 +24,7 @@ class LinearWarmupCosineDecayLR(torch.optim.lr_scheduler.LRScheduler):
     def load_state_dict(self, state_dict):
         super().load_state_dict(state_dict)
 
-    def get_lr(self):
+    def get_lr(self) -> list[float | torch.Tensor]:
         step = self.last_epoch
         lr = self.compute_lr(step)
         return [lr for _ in self.optimizer.param_groups]
