@@ -85,7 +85,30 @@ class DataLoaderLite:
     def __len__(self):
         return self.max_tokens // self.batch_tokens
 
+    def iter_from(self, step):
+        if step == len(self):
+            return
+
+        shard_lenghts = [len(np.load(s, mmap_mode="r")) for s in self.shards]
+        steps_per_shard = [
+            ((length - 1) // self.batch_tokens) for length in shard_lenghts
+        ]
+        cum_steps = np.cumsum(steps_per_shard)
+
+        cycle_step = step % cum_steps[-1]
+        self.current_shard = np.searchsorted(cum_steps, cycle_step, side="right")
+        self.tokens = load_tokens(self.shards[self.current_shard])
+
+        step_in_shard = (
+            cycle_step
+            if self.current_shard == 0
+            else cycle_step - cum_steps[self.current_shard - 1]
+        )
+        self.step_start = step_in_shard * self.batch_tokens
+
+        for _ in range(len(self) - step):
+            yield self.next_batch()
+
     def __iter__(self):
         self.reset()
-        for _ in range(len(self)):
-            yield self.next_batch()
+        return self.iter_from(0)

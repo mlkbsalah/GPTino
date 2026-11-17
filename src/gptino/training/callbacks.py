@@ -1,6 +1,9 @@
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
+
+from .rng import get_rng_state
 
 
 class BaseCallback:
@@ -35,17 +38,22 @@ class CheckpointCallback(BaseCallback):
             self.latest_checkpoint_path.touch(exist_ok=True)
 
     def on_step_end(self, trainer):
-        if not trainer.ddp_context.master_process:
-            return
         if trainer.step % self.save_interval == 0 and trainer.step > 0:
             self._save_checkpoint(trainer)
 
     def on_train_end(self, trainer):
-        if not trainer.ddp_context.master_process:
-            return
         self._save_checkpoint(trainer)
 
     def _save_checkpoint(self, trainer):
+        local_rng_state = get_rng_state(trainer.device)
+        if trainer.ddp:
+            rng_states = [None] * trainer.ddp_context.world_size
+            dist.all_gather_object(rng_states, local_rng_state)
+        else:
+            rng_states = [local_rng_state]
+        if not trainer.ddp_context.master_process:
+            return
+
         module = getattr(trainer.model, "module", trainer.model)
         checkpoint_path = self.save_dir / f"checkpoint_step_{trainer.step}.pt"
         torch.save(
@@ -55,6 +63,7 @@ class CheckpointCallback(BaseCallback):
                 "lr_scheduler_state_dict": trainer.lr_scheduler.state_dict(),
                 "model_config": module.config,
                 "completed_steps": trainer.step,
+                "rng_states": rng_states,
             },
             checkpoint_path,
         )

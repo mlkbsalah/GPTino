@@ -4,6 +4,7 @@ import torch
 import torch.distributed as dist
 
 from .callbacks import TrainSummaryCallback
+from .rng import set_rng_state
 
 
 class TrainerLite:
@@ -18,6 +19,7 @@ class TrainerLite:
         gradient_clip_norm,
         logger,
         callbacks,
+        resume,
     ):
         self.logger = logger
         self.model = model
@@ -36,14 +38,35 @@ class TrainerLite:
         self.step = 0  # step stores the number of training steps taken
         self.raw_model = model if not self.ddp else model.module
 
+        self.resume = resume
+
+    def load_training_checkpoint(self, resume):
+        checkpoint = torch.load(resume, map_location=self.device, weights_only=False)
+        rng_states = checkpoint.get("rng_states")
+        if len(rng_states) != self.ddp_context.world_size:
+            raise ValueError(
+                "RNG resume requires the same world size as the checkpoint"
+            )
+        self.raw_model.load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.step = checkpoint["completed_steps"]
+        self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
+        return None if rng_states is None else rng_states[self.ddp_context.rank]
+
     def _run_callbacks(self, event_name, **kwargs):
         for callback in self.callbacks:
             getattr(callback, event_name)(self, **kwargs)
 
     def fit(self, train_dataloader, validation_dataloader):
-        self._run_callbacks("on_train_begin")
+        rng_state = None
+        if self.resume is not None:
+            rng_state = self.load_training_checkpoint(self.resume)
 
-        for batch in train_dataloader:
+        self._run_callbacks("on_train_begin")
+        if rng_state is not None:
+            set_rng_state(rng_state, self.device)
+
+        for batch in train_dataloader.iter_from(self.step):
             self._run_callbacks("on_step_begin")
 
             self.model.train()

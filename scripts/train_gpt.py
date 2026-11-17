@@ -21,6 +21,7 @@ from gptino.training.callbacks import (
 )
 from gptino.training.logger import LoggerLite
 from gptino.training.lr_scheduler import LinearWarmupCosineDecayLR, LRSchedulerConfig
+from gptino.training.rng import seed_everything
 from gptino.training.trainer import TrainerLite
 
 CONFIG_PATH = "config/gpt_config.yaml"
@@ -99,6 +100,35 @@ def load_train_config(path):
     return cfg
 
 
+def save_config(cfg: TrainConfig, path):
+    raw = {
+        "model": {**cfg.model, "context_length": cfg.context_length},
+        "data": {"data_dir": cfg.data_dir},
+        "training": {
+            "seed": cfg.seed,
+            "train_tokens": cfg.train_tokens,
+            "train_batch_tokens": cfg.train_batch_tokens,
+            "train_micro_batch_size": cfg.train_micro_batch_size,
+            "val_tokens": cfg.val_tokens,
+            "val_micro_batch_size": cfg.val_micro_batch_size,
+            "lr_scheduler": cfg.lr_scheduler,
+            "optimizer": {
+                "weight_decay": cfg.weight_decay,
+                "grad_clip_norm": cfg.grad_clip_norm,
+            },
+            "logging": {
+                "validation_interval": cfg.validation_interval,
+                "logging_interval": cfg.logging_interval,
+                "sample_interval": cfg.sample_interval,
+                "save_interval": cfg.save_interval,
+            },
+            "sample": cfg.sample,
+        },
+    }
+    with open(path, "w") as f:
+        yaml.safe_dump(raw, f, indent=4, sort_keys=False)
+
+
 def debug_config(cfg: TrainConfig, world_size: int) -> TrainConfig:
     batch_tokens = 2 * cfg.train_micro_batch_size * cfg.context_length * world_size
     return replace(
@@ -122,15 +152,6 @@ def get_device():
         device = "mps"
     print(f"using device: {device}")
     return device
-
-
-def seed_everything(seed, device):
-    torch.manual_seed(seed)
-    if device == "cuda":
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-    elif device == "mps":
-        torch.mps.manual_seed(seed)
 
 
 def setup_ddp():
@@ -160,17 +181,24 @@ def setup_ddp():
     )
 
 
-def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False):
+def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None):
+    assert not (debug and resume is not None), (
+        "Cannot debug and resume from a checkpoint"
+    )
+    run_dir = Path(resume).parent.parent if resume is not None else run_dir
+    run_dir.mkdir(parents=True, exist_ok=True)
+    config_path = run_dir / "config.yaml" if resume else config_path
     ddp_context = setup_ddp()
+
     cfg = load_train_config(config_path)
+    if resume is not None:
+        print(f"Resuming from {resume}, setting config to {config_path}")
     if debug:
         cfg = debug_config(cfg, ddp_context.world_size)
-        if ddp_context.master_process:
-            print(
-                "Debug mode: 2 optimizer steps, 2 micro-batches per rank per step, "
-                "1 validation batch per rank, logging and sampling every step, "
-                "checkpoints disabled."
-            )
+
+    if ddp_context.master_process:
+        save_config(cfg, run_dir / "config.yaml")
+
     seed_everything(cfg.seed, ddp_context.device)
 
     train_loader = DataLoaderLite(
@@ -263,6 +291,7 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False):
             ),
             LearningRateCallback(),
         ],
+        resume=resume,
     )
 
     trainer.fit(train_loader, val_loader)
@@ -285,5 +314,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Run two optimizer steps with validation, sampling, and logging every step",
     )
+
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        help="Path to checkpoint to resume from",
+    )
     args = parser.parse_args()
-    main(run_dir=args.run_dir, debug=args.debug)
+
+    if args.resume is not None and args.debug:
+        raise ValueError("Cannot resume from a checkpoint while in debug mode")
+    main(run_dir=args.run_dir, debug=args.debug, resume=args.resume)
