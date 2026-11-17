@@ -109,7 +109,7 @@ def debug_config(cfg: TrainConfig, world_size: int) -> TrainConfig:
         validation_interval=1,
         logging_interval=1,
         sample_interval=1,
-        save_checkpoints=False,
+        save_checkpoints=True,
         sample={**cfg.sample, "n_samples": 1, "max_new_tokens": 16},
     )
 

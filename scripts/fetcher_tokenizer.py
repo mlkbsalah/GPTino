@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+from pathlib import Path
 
 import numpy as np
 import tiktoken
 from datasets import load_dataset
 from tqdm import tqdm
 
-tiktoken_cache_dir = "/workdir/bensalama/GPTino/tiktoken/"
-os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache_dir
 enc = tiktoken.get_encoding("gpt2")
 eot = enc._special_tokens["<|endoftext|>"]
 
-OUTPUT_DIR = "/workdir/bensalama/GPTino/fineweb-edu-tokenized/"
+OUTPUT_DIR = Path(__name__).parent / "data/fineweb-edu-tokenized"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 SHARD_SIZE = 100_000_000
