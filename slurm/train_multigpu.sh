@@ -47,5 +47,5 @@ srun apptainer exec --nv --env PYTHONPATH=src ${IMAGE} \
             --rdzv_id=gpt2_job_${SLURM_JOB_ID} \
             scripts/train_gpt.py \
                 --run_dir ${RUN_DIR} \
-                
+
 [ $? -eq 0 ] && write_meta completed || write_meta failed

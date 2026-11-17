@@ -33,7 +33,7 @@ class TrainerLite:
         self.validation_interval = validation_interval
         self.micro_batch_size = micro_batch_size
 
-        self.step = 0
+        self.step = 0  # step stores the number of training steps taken
         self.raw_model = model if not self.ddp else model.module
 
     def _run_callbacks(self, event_name, **kwargs):
@@ -130,4 +130,6 @@ class TrainerLite:
 
     def micro_batch_generator(self, batch):
         x, y = batch
-        yield from zip(x.split(self.micro_batch_size), y.split(self.micro_batch_size))
+        yield from zip(
+            x.split(self.micro_batch_size), y.split(self.micro_batch_size)
+        )  # split sequences since i want context lenght to stay the same.

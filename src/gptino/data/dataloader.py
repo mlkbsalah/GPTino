@@ -1,7 +1,8 @@
 import os
 
-from .utils import load_tokens
 import numpy as np
+
+from .utils import load_tokens
 
 
 class DataLoaderLite:
@@ -56,8 +57,11 @@ class DataLoaderLite:
         count_at_start = (
             np.cumsum(effective_tokens_per_shard) - effective_tokens_per_shard
         )
-        needed_shards = np.where(count_at_start < self.max_tokens)[0][-1]
-        return shards[: needed_shards + 1]
+        needed_shards = np.where(
+            (count_at_start < self.max_tokens)
+            & (np.array(effective_tokens_per_shard) > 0)
+        )[0]
+        return [shards[i] for i in needed_shards]
 
     def reset(self):
         self.current_shard = 0
