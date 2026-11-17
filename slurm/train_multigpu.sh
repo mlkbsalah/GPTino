@@ -10,8 +10,9 @@
 
 IMAGE=train_gym.sif
 
-cd /home/m-ben-salah/repos/GPTino
-RUN_DIR=runs/$(date "+%Y-%m-%d_%H-%M-%S")_job_${SLURM_JOB_ID}
+cd "${SLURM_SUBMIT_DIR}" || exit 1
+RUN_DIR=runs/$(date "+%Y-%m-%d_%H-%M-%S")_job_${SLURM_JOB_ID}${RUN_SUFFIX:-}
+
 mkdir -p ${RUN_DIR}/metadata/
 ln -s ../.slurm/${SLURM_JOB_ID}.out ${RUN_DIR}/slurm.out
 
@@ -46,6 +47,7 @@ srun apptainer exec --nv --env PYTHONPATH=src ${IMAGE} \
             --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
             --rdzv_id=gpt2_job_${SLURM_JOB_ID} \
             scripts/train_gpt.py \
-                --run_dir ${RUN_DIR} \
+                --run_dir "${RUN_DIR}" \
+                "$@"
 
 [ $? -eq 0 ] && write_meta completed || write_meta failed
