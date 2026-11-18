@@ -1,3 +1,5 @@
+"""Simple logger that writes handles writing values in a file (does not care about ddp)"""
+
 import json
 from pathlib import Path
 
@@ -8,14 +10,8 @@ class LoggerLite:
     def __init__(
         self,
         log_dir: Path,
-        logging_interval: int,
-        ddp_context,
         experiment_name: str | None = None,
     ):
-        self.master_process = ddp_context.master_process
-        self.ddp_enabled = ddp_context.enabled
-        self.logging_interval = logging_interval
-
         self.log_path = (
             log_dir if experiment_name is None else log_dir / experiment_name
         )
@@ -24,7 +20,7 @@ class LoggerLite:
         self.log_dict: dict[str, float] = {}
         self.console_log: dict[str, float] = {}
 
-    def log_value(self, value, name, log_on_console=True):
+    def record(self, name, value, log_on_console=True):
         assert name not in self.log_dict, f"Metric {name} already logged for this step"
         self.log_dict[name] = value.item() if isinstance(value, torch.Tensor) else value
         if log_on_console:
@@ -32,7 +28,7 @@ class LoggerLite:
                 value.item() if isinstance(value, torch.Tensor) else value
             )
 
-    def write_metrics(self):
+    def flush(self):
         with open(self.log_path / "metrics.jsonl", "a") as f:
             json.dump(dict(self.log_dict), f)
             f.write("\n")
@@ -42,7 +38,8 @@ class LoggerLite:
             ),
             flush=True,
         )
+        self.clear()
 
-    def flush(self):
+    def clear(self):
         self.log_dict.clear()
         self.console_log.clear()

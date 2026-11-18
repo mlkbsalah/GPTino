@@ -24,7 +24,7 @@ def test_accumulated_update_matches_full_batch(tmp_path):
         micro_batch_size=2,
         validation_interval=1,
         gradient_clip_norm=1.0,
-        logger=LoggerLite(tmp_path, logging_interval=1, ddp_context=context),
+        logger=LoggerLite(tmp_path),
         callbacks=[],
     )
     x = torch.tensor([[0, 1], [2, 3], [4, 5], [6, 7], [0, 2]])

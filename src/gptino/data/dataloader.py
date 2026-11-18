@@ -37,10 +37,6 @@ class DataLoaderLite:
         self.shards = self._find_shards(data_dir, split)
 
     def _find_shards(self, data_dir, split):
-        """
-        Find the shards for the given split and return the list of shards (paths) necessary to cover max_tokens
-        - if shards are not enough the function returns all the shards available
-        """
         shards = sorted(s for s in os.listdir(data_dir) if split in s)
         shards = [os.path.join(data_dir, s) for s in shards]
         assert len(shards) > 0, f"No shards found in {data_dir} for split {split}"
