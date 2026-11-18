@@ -35,7 +35,7 @@ class CheckpointCallback(BaseCallback):
     def on_train_begin(self, trainer):
         if trainer.ddp_context.master_process:
             self.save_dir.mkdir(parents=True, exist_ok=True)
-            self.latest_checkpoint_path.touch(exist_ok=True)
+
 
     def on_step_end(self, trainer):
         if trainer.step % self.save_interval == 0 and trainer.step > 0:
