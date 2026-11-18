@@ -10,15 +10,13 @@
 
 IMAGE=train_gym.sif
 
-cd "${SLURM_SUBMIT_DIR}" || exit 1
 RUN_DIR=runs/$(date "+%Y-%m-%d_%H-%M-%S")_job_${SLURM_JOB_ID}${RUN_SUFFIX:-}
 
 mkdir -p ${RUN_DIR}/metadata/
+
 ln -s ../.slurm/${SLURM_JOB_ID}.out ${RUN_DIR}/slurm.out
-
-
 git diff HEAD > ${RUN_DIR}/metadata/git_diff.patch
-apptainer exec ${IMAGE} pip freeze > ${RUN_DIR}/metadata/env.txt
+cp -- pyproject.toml uv.lock ${RUN_DIR}/metadata/
 
 write_meta() {
     cat > ${RUN_DIR}/metadata/meta.json <<EOF
@@ -32,6 +30,7 @@ write_meta() {
 }
 EOF
 }
+
 START_TIME=$(date -Iseconds)
 write_meta running
 

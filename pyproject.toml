@@ -1,34 +1,31 @@
+[build-system]
+requires = ["uv_build>=0.13.6, <0.14.0"]
+build-backend = "uv_build"
+
 [project]
 name = "gptino"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+description = "LLM learning"
+requires-python = ">=3.14"
 authors = [
     { name = "mlkbsalah", email = "malek.ben-salah@centralesupelec.fr" }
 ]
-requires-python = ">=3.13"
 dependencies = [
-    "datasets>=5.1.0",
-    "ipykernel>=7.4.0",
-    "lightning>=2.6.6",
-    "numpy>=2.5.4",
-    "pandas>=3.1.0",
+    "datasets>=5.2.0",
+    "numpy>=2.5.5",
+    "pandas>=3.1.1",
     "pyaml>=26.7.0",
     "tiktoken>=0.14.0",
-    "torch>=2.14.1",
+    "torch>=2.11.0",
     "tqdm>=4.70.1",
-    "transformers>=5.20.2",
-    "wandb>=0.31.0",
 ]
 
-[project.scripts]
-gptino = "gptino:main"
-
-[build-system]
-requires = ["uv_build>=0.12.19,<0.13.0"]
-build-backend = "uv_build"
-
-[dependency-groups]
-dev = [
-    "pytest>=9.2.0",
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cuda-12.8", marker = "sys.platform == 'linux'"}
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cuda-12.8"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

@@ -1,8 +1,11 @@
-FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
+FROM python:3.14.10-slim-trixie
 
-WORKDIR /workspace
+WORKDIR /workdir
 
-RUN apt-get update && apt-get install -y tmux && apt-get clean
+RUN pip install --no-cache-dir uv
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-install-project

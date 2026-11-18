@@ -1,9 +1,0 @@
-torch
-numpy
-tiktoken
-tqdm
-transformers
-datasets
-wandb
-lightning
-pandas
