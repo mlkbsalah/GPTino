@@ -71,12 +71,12 @@ class TrainConfig:
     grad_clip_norm: float
 
     validation_interval: int
-    logging_interval: int
     sample_interval: int
     save_interval: int
     save_checkpoints: bool
 
     sample: dict
+    task_evaluation: dict | None = None
 
 
 def load_config(path):
@@ -84,7 +84,7 @@ def load_config(path):
         return yaml.safe_load(f)
 
 
-def load_train_config(path):
+def load_train_config(path, debug=False, world_size=1):
     raw = load_config(path)
     training = raw["training"]
     lr = training["lr_scheduler"]
@@ -106,14 +106,14 @@ def load_train_config(path):
         weight_decay=optimizer["weight_decay"],
         grad_clip_norm=optimizer["grad_clip_norm"],
         validation_interval=logging["validation_interval"],
-        logging_interval=logging["logging_interval"],
         sample_interval=logging["sample_interval"],
         save_interval=logging["save_interval"],
         save_checkpoints=True,
         sample=sample,
+        task_evaluation=training.get("task_evaluation"),
     )
 
-    return cfg
+    return debug_config(cfg, world_size) if debug else cfg
 
 
 def save_config(cfg: TrainConfig, path):
@@ -134,11 +134,11 @@ def save_config(cfg: TrainConfig, path):
             },
             "logging": {
                 "validation_interval": cfg.validation_interval,
-                "logging_interval": cfg.logging_interval,
                 "sample_interval": cfg.sample_interval,
                 "save_interval": cfg.save_interval,
             },
             "sample": cfg.sample,
+            "task_evaluation": cfg.task_evaluation,
         },
     }
     with open(path, "w") as f:
@@ -153,7 +153,6 @@ def debug_config(cfg: TrainConfig, world_size: int) -> TrainConfig:
         train_tokens=2 * batch_tokens,
         val_tokens=cfg.val_micro_batch_size * cfg.context_length * world_size,
         validation_interval=1,
-        logging_interval=1,
         sample_interval=1,
         save_checkpoints=True,
         sample={**cfg.sample, "n_samples": 1, "max_new_tokens": 16},

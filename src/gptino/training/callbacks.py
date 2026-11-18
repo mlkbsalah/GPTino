@@ -36,7 +36,6 @@ class CheckpointCallback(BaseCallback):
         if trainer.ddp_context.master_process:
             self.save_dir.mkdir(parents=True, exist_ok=True)
 
-
     def on_step_end(self, trainer):
         if trainer.step % self.save_interval == 0 and trainer.step > 0:
             self._save_checkpoint(trainer)
@@ -163,3 +162,25 @@ class CompleteTextCallback(BaseCallback):
             return
         completions = self.sample(trainer)
         self.log_completions(trainer, completions)
+
+
+class DownStreamEvaluationCallback(BaseCallback):
+    def __init__(self, evaluation_interval, evaluators):
+        self.evaluation_interval = evaluation_interval
+        self.evaluators = evaluators
+
+    @torch.inference_mode()
+    def on_step_end(self, trainer):
+        if trainer.step % self.evaluation_interval != 0:
+            return
+        model = trainer.raw_model
+        for evaluator in self.evaluators:
+            result = evaluator.evaluate(model, trainer.device)
+            if trainer.ddp_context.master_process:
+                for loader, loader_result in result.items():
+                    for metric, value in loader_result.items():
+                        trainer.record_metric(f"{loader}/{metric}", value, reduce=False)
+
+    @torch.inference_mode()
+    def on_train_end(self, trainer):
+        self.on_step_end(trainer)

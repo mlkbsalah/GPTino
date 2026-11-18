@@ -1,25 +1,25 @@
-from __future__ import annotations
-
-import argparse
 from pathlib import Path
 
-import tiktoken
 import torch
 import torch.distributed as dist
-from torch.distributed import destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader
 
+import tiktoken
 from gptino.config import (
-    debug_config,
     load_train_config,
     save_config,
     setup_ddp,
 )
 from gptino.data.dataloader import DataLoaderLite
+from gptino.data.hellaswag import HellaSwagDataset
+from gptino.data.piqa import PIQADataset
+from gptino.evaluation.multiple_choice_evaluator import MultipleChoiceQuestionEvaluator
 from gptino.module.gpt import GPT, GPTConfig
 from gptino.training.callbacks import (
     CheckpointCallback,
     CompleteTextCallback,
+    DownStreamEvaluationCallback,
     LearningRateCallback,
 )
 from gptino.training.logger import LoggerLite
@@ -30,20 +30,41 @@ from gptino.training.trainer import TrainerLite
 CONFIG_PATH = "config/gpt_config.yaml"
 
 
+def build_downstream_callbacks(config, ddp_context):
+    if not config:
+        return []
+
+    dataloaders = {}
+    for name, dataset_class in (
+        ("hellaswag", HellaSwagDataset),
+        ("piqa", PIQADataset),
+    ):
+        path = config.get(f"{name}_path")
+        if path is None:
+            continue
+        dataset = dataset_class(path)
+        dataloaders[name] = DataLoader(
+            dataset,
+            batch_size=None,
+            sampler=range(ddp_context.rank, len(dataset), ddp_context.world_size),
+        )
+    evaluators = [MultipleChoiceQuestionEvaluator(dataloaders, ddp_context)]
+
+    return [DownStreamEvaluationCallback(config["interval"], evaluators)]
+
+
 def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None):
     assert not (debug and resume is not None), (
-        "Cannot debug and resume from a checkpoint"
+        "Cannot debug and resume from a checkpoint at the same time"
     )
     run_dir = Path(resume).parent.parent if resume is not None else run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     config_path = run_dir / "config.yaml" if resume else config_path
     ddp_context = setup_ddp()
 
-    cfg = load_train_config(config_path)
+    cfg = load_train_config(config_path, debug=debug, world_size=ddp_context.world_size)
     if resume is not None:
         print(f"Resuming from {resume}, setting config to {config_path}")
-    if debug:
-        cfg = debug_config(cfg, ddp_context.world_size)
 
     if ddp_context.master_process:
         save_config(cfg, run_dir / "config.yaml")
@@ -76,7 +97,8 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
 
     if ddp_context.master_process:
         print(
-            f"train: {len(train_loader)} steps of {train_loader.batch_tokens} tokens | val: {len(val_loader)} steps of {val_loader.batch_tokens} tokens"
+            f"train: {len(train_loader)} steps of {train_loader.batch_tokens} tokens | "
+            f"val: {len(val_loader)} steps of {val_loader.batch_tokens} tokens"
         )
 
     model = GPT(GPTConfig(**cfg.model))
@@ -91,13 +113,11 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
                 "weight_decay": cfg.weight_decay,
             },
             {
-                "params": [p for p in model.parameters() if p.dim() < 2],
+                "params": [p for p in model.parameters() if p.dim() <= 1],
                 "weight_decay": 0.0,
             },
         ],
-        lr=cfg.lr_scheduler[
-            "min_lr"
-        ],  # will be overwritten by the scheduler, but we need to set it to something
+        lr=cfg.lr_scheduler["min_lr"],
         betas=(0.9, 0.95),
         eps=1e-8,
         weight_decay=cfg.weight_decay,
@@ -114,9 +134,7 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
         ),
     )
 
-    logger = LoggerLite(
-        log_dir=run_dir, ddp_context=ddp_context, logging_interval=cfg.logging_interval
-    )
+    logger = LoggerLite(log_dir=run_dir)
 
     trainer = TrainerLite(
         model=model,
@@ -139,7 +157,8 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
                 **cfg.sample,
             ),
             LearningRateCallback(),
-        ],
+        ]
+        + build_downstream_callbacks(cfg.task_evaluation, ddp_context),
         resume=resume,
     )
 
@@ -147,11 +166,13 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
 
     if ddp_context.enabled:
         dist.barrier()
-        destroy_process_group()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser()
     parser.add_argument(
         "--run_dir",
         type=Path,
@@ -163,12 +184,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run two optimizer steps with validation, sampling, and logging every step",
     )
-
     parser.add_argument(
         "--resume",
         type=Path,
         help="Path to checkpoint to resume from",
     )
+
     args = parser.parse_args()
 
     if args.resume is not None and args.debug:

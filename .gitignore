@@ -11,6 +11,7 @@ gptino.tar
 *.pt
 *.sif
 hellaswag/
+piqa/
 __pycache__/
 GPT2/
 tiny-shakespeare/

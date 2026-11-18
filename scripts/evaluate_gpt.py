@@ -1,39 +1,56 @@
-import json
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 
-from gptino.evaluation.hellaswag import HellaSwagDataset
-from gptino.evaluation.multiple_choice import evaluate_multiple_choice_questions
+from gptino.data.hellaswag import HellaSwagDataset
+from gptino.data.piqa import PIQADataset
+from gptino.evaluation.multiple_choice_evaluator import MultipleChoiceQuestionEvaluator
 from gptino.module.gpt import GPT
 
+DATASET_MAP = {
+    "hellaswag": HellaSwagDataset,
+    "piqa": PIQADataset,
+}
 
-def main(checkpoint_path: Path, dataset_path: Path, device: str):
-    checkpoint = torch.load(checkpoint_path, weights_only=False)
+DATASET_PATH_MAP = {
+    "hellaswag": Path("data/hellaswag/validation-00000-of-00001.parquet"),
+    "piqa": Path("data/piqa/validation-00000-of-00001.parquet"),
+}
+
+
+def main(checkpoint_path: Path, dataset_names, device):
+    checkpoint = torch.load(checkpoint_path, weights_only=False, map_location=device)
     model_config = checkpoint["model_config"]
     model = GPT(model_config)
     model.load_state_dict(checkpoint["model_state_dict"])
 
-    dataset = HellaSwagDataset(dataset_path)
-    dataloader = DataLoader(dataset, batch_size=None)
-    results, accuracy = evaluate_multiple_choice_questions(model, dataloader, device)
+    datasets = [
+        DATASET_MAP[dataset_name](DATASET_PATH_MAP[dataset_name])
+        for dataset_name in dataset_names
+    ]
+    dataloaders = [DataLoader(dataset, batch_size=None) for dataset in datasets]
+    evaluator = MultipleChoiceQuestionEvaluator(
+        {
+            dataset_name: dataloader
+            for dataset_name, dataloader in zip(dataset_names, dataloaders)
+        }
+    )
+    results = evaluator.evaluate(model, device)
 
-    with open(checkpoint_path.parent.parent / "hellaswag_results.jsonl", "w") as f:
-        f.writelines(json.dumps(result) + "\n" for result in results)
-
-    print(f"Accuracy: {accuracy:.2f}")
+    for dataset_name, metrics in results.items():
+        print(f"{dataset_name}: {metrics['accuracy']:.2f}")
 
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
 
-    HELLA_SWAG_PATH = Path("data/hellaswag/validation-00000-of-00001.parquet")
-
     parser = ArgumentParser()
     parser.add_argument("--checkpoint-path", type=Path, required=True)
-    parser.add_argument("--dataset-path", default=HELLA_SWAG_PATH, type=Path)
+    parser.add_argument(
+        "--dataset", nargs="+", default=["hellaswag"], choices=DATASET_MAP.keys()
+    )
     parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
 
-    main(args.checkpoint_path, args.dataset_path, args.device)
+    main(args.checkpoint_path, args.dataset, args.device)

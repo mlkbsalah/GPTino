@@ -91,20 +91,17 @@ class TrainerLite:
             self.flush_metrics()
 
         self._run_callbacks("on_train_end")
+        self.flush_metrics()
 
-    def record_metric(self, name, value, reduce=True):
+    def record_metric(self, name, value, reduce):
         if self.ddp and reduce:
             dist.all_reduce(value, op=dist.ReduceOp.AVG)
         if self.ddp_context.master_process:
-            self.logger.log_value(value, name)
+            self.logger.record(name, value)
 
     def flush_metrics(self):
-        if (
-            self.ddp_context.master_process
-            and self.step % self.logger.logging_interval == 0
-        ):
-            self.logger.write_metrics()
-        self.logger.flush()
+        if self.ddp_context.master_process:
+            self.logger.flush()
 
     def train_batch(self, batch):
         self.optimizer.zero_grad()
@@ -125,7 +122,7 @@ class TrainerLite:
         norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), max_norm=self.gradient_clip_norm
         )
-        self.logger.log_value(norm, "Gradient Norm")
+        self.record_metric("Gradient Norm", norm, reduce=False)
         self.optimizer.step()
         self.lr_scheduler.step()
         return loss_accum

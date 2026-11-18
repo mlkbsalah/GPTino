@@ -6,16 +6,6 @@ from torch.utils.data import Dataset
 enc = tiktoken.get_encoding("gpt2")
 
 
-def set_device():
-    device = "cpu"
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    print(f"using device: {device}")
-    return device
-
-
 class HellaSwagDataset(Dataset):
     def __init__(self, path):
         self.df = pd.read_parquet(path)
