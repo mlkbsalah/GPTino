@@ -130,7 +130,7 @@ class TrainerLite:
         self.lr_scheduler.step()
         return loss_accum
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate(self, val_dataloader):
         val_loss_accum = torch.zeros(1, device=self.device)
         for batch in val_dataloader:
