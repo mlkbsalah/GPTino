@@ -8,6 +8,39 @@ from .callbacks import TrainSummaryCallback
 from .rng import set_rng_state
 
 
+@contextlib.contextmanager
+def profile_step(device, tokens, ddp_context):
+    device_type = torch.device(device).type
+
+    def synchronize():
+        if device_type == "cuda":
+            torch.cuda.synchronize(device)
+        elif device_type == "mps":
+            torch.mps.synchronize()
+
+    metrics = {}
+    synchronize()
+    if device_type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    start = time.perf_counter()
+    yield metrics
+    synchronize()
+    elapsed = time.perf_counter() - start
+
+    stats = [elapsed]
+    if device_type == "cuda":
+        stats += [torch.cuda.max_memory_allocated(device) / 1024**3]
+    if device_type == "mps":
+        stats += [torch.mps.max_memory_allocated(device) / 1024**3]
+
+    stats = torch.tensor(stats, device=device)
+    if ddp_context.enabled:
+        dist.all_reduce(stats, op=dist.ReduceOp.MAX)
+        tokens *= ddp_context.world_size
+    metrics["Training Tokens/sec"] = tokens / stats[0]
+    metrics["peak_gpu"] = stats[1] if device_type == "cuda" else stats[2]
+
+
 class TrainerLite:
     def __init__(
         self,
@@ -62,29 +95,17 @@ class TrainerLite:
         rng_state = None
         if self.resume is not None:
             rng_state = self.load_training_checkpoint(self.resume)
-
-        self._run_callbacks("on_train_begin")
         if rng_state is not None:
             set_rng_state(rng_state, self.device)
 
-        device_type = torch.device(self.device).type
+        self._run_callbacks("on_train_begin")
         for batch in train_dataloader.iter_from(self.step):
             self._run_callbacks("on_step_begin")
 
             self.model.train()
-            if device_type == "cuda":
-                torch.cuda.synchronize(self.device)
-                torch.cuda.reset_peak_memory_stats(self.device)
-            elif device_type == "mps":
-                torch.mps.synchronize()
-            start = time.perf_counter()
-            batch_loss = self.train_batch(batch)
-            if device_type == "cuda":
-                torch.cuda.synchronize(self.device)
-            elif device_type == "mps":
-                torch.mps.synchronize()
-            elapsed = time.perf_counter() - start
-            self.record_performance(batch[0].numel(), elapsed)
+            with profile_step(self.device, batch[0].numel(), self.ddp_context) as profile_metrics:
+                batch_loss = self.train_batch(batch)
+            self.record_metric_dict(profile_metrics, reduce=False)
             self.step += 1
 
             self.record_metric("Training Loss", batch_loss, reduce=True)
@@ -107,27 +128,15 @@ class TrainerLite:
         self._run_callbacks("on_train_end")
         self.flush_metrics()
 
-    def record_performance(self, tokens, elapsed):
-        stats = [elapsed]
-        if torch.device(self.device).type == "cuda":
-            stats += [
-                torch.cuda.max_memory_allocated(self.device) / 1024**3,
-                torch.cuda.max_memory_reserved(self.device) / 1024**3,
-            ]
-        stats = torch.tensor(stats, device=self.device)
-        if self.ddp:
-            dist.all_reduce(stats, op=dist.ReduceOp.MAX)
-            tokens *= self.ddp_context.world_size
-        self.record_metric("Training Tokens/sec", tokens / stats[0], reduce=False)
-        if torch.device(self.device).type == "cuda":
-            self.record_metric("Peak GPU Allocated GiB", stats[1], reduce=False)
-            self.record_metric("Peak GPU Reserved GiB", stats[2], reduce=False)
-
     def record_metric(self, name, value, reduce):
         if self.ddp and reduce:
             dist.all_reduce(value, op=dist.ReduceOp.AVG)
         if self.ddp_context.master_process:
             self.logger.record(name, value)
+
+    def record_metric_dict(self, metric_dict, reduce):
+        for name, value in metric_dict.items():
+            self.record_metric(name, value, reduce)
 
     def flush_metrics(self):
         if self.ddp_context.master_process:
