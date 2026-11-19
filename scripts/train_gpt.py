@@ -30,7 +30,7 @@ from gptino.training.trainer import TrainerLite
 CONFIG_PATH = "config/gpt_config.yaml"
 
 
-def build_downstream_callbacks(config, ddp_context):
+def build_downstream_callbacks(config, ddp_context, save_path):
     if not config:
         return []
 
@@ -50,7 +50,7 @@ def build_downstream_callbacks(config, ddp_context):
         )
     evaluators = [MultipleChoiceQuestionEvaluator(dataloaders, ddp_context)]
 
-    return [DownStreamEvaluationCallback(config["interval"], evaluators)]
+    return [DownStreamEvaluationCallback(config["interval"], evaluators, save_path)]
 
 
 def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None):
@@ -158,7 +158,9 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
             ),
             LearningRateCallback(),
         ]
-        + build_downstream_callbacks(cfg.task_evaluation, ddp_context),
+        + build_downstream_callbacks(
+            cfg.task_evaluation, ddp_context, save_path=run_dir / "task_eval.jsonl"
+        ),
         resume=resume,
     )
 

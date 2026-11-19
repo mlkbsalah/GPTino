@@ -1,4 +1,5 @@
 import contextlib
+import time
 
 import torch
 import torch.distributed as dist
@@ -66,11 +67,24 @@ class TrainerLite:
         if rng_state is not None:
             set_rng_state(rng_state, self.device)
 
+        device_type = torch.device(self.device).type
         for batch in train_dataloader.iter_from(self.step):
             self._run_callbacks("on_step_begin")
 
             self.model.train()
+            if device_type == "cuda":
+                torch.cuda.synchronize(self.device)
+                torch.cuda.reset_peak_memory_stats(self.device)
+            elif device_type == "mps":
+                torch.mps.synchronize()
+            start = time.perf_counter()
             batch_loss = self.train_batch(batch)
+            if device_type == "cuda":
+                torch.cuda.synchronize(self.device)
+            elif device_type == "mps":
+                torch.mps.synchronize()
+            elapsed = time.perf_counter() - start
+            self.record_performance(batch[0].numel(), elapsed)
             self.step += 1
 
             self.record_metric("Training Loss", batch_loss, reduce=True)
@@ -92,6 +106,22 @@ class TrainerLite:
 
         self._run_callbacks("on_train_end")
         self.flush_metrics()
+
+    def record_performance(self, tokens, elapsed):
+        stats = [elapsed]
+        if torch.device(self.device).type == "cuda":
+            stats += [
+                torch.cuda.max_memory_allocated(self.device) / 1024**3,
+                torch.cuda.max_memory_reserved(self.device) / 1024**3,
+            ]
+        stats = torch.tensor(stats, device=self.device)
+        if self.ddp:
+            dist.all_reduce(stats, op=dist.ReduceOp.MAX)
+            tokens *= self.ddp_context.world_size
+        self.record_metric("Training Tokens/sec", tokens / stats[0], reduce=False)
+        if torch.device(self.device).type == "cuda":
+            self.record_metric("Peak GPU Allocated GiB", stats[1], reduce=False)
+            self.record_metric("Peak GPU Reserved GiB", stats[2], reduce=False)
 
     def record_metric(self, name, value, reduce):
         if self.ddp and reduce:

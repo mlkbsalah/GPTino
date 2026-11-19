@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import torch
@@ -165,21 +166,32 @@ class CompleteTextCallback(BaseCallback):
 
 
 class DownStreamEvaluationCallback(BaseCallback):
-    def __init__(self, evaluation_interval, evaluators):
+    def __init__(self, evaluation_interval, evaluators, save_path: Path):
         self.evaluation_interval = evaluation_interval
         self.evaluators = evaluators
+        self.save_path = save_path
+
+    def on_train_begin(self, trainer):
+        self.evaluate(trainer)
+
+    def on_step_end(self, trainer):
+        if trainer.step % self.evaluation_interval == 0:
+            self.evaluate(trainer)
 
     @torch.inference_mode()
-    def on_step_end(self, trainer):
-        if trainer.step % self.evaluation_interval != 0:
-            return
+    def evaluate(self, trainer):
         model = trainer.raw_model
+        task_eval = {"Step": trainer.step}
         for evaluator in self.evaluators:
             result = evaluator.evaluate(model, trainer.device)
-            if trainer.ddp_context.master_process:
-                for loader, loader_result in result.items():
-                    for metric, value in loader_result.items():
-                        trainer.record_metric(f"{loader}/{metric}", value, reduce=False)
+            for loader, loader_result in result.items():
+                for metric, value in loader_result.items():
+                    task_eval[f"{loader}/{metric}"] = value
+        if trainer.ddp_context.master_process:
+            self.save_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.save_path, "a", encoding="utf-8") as f:
+                json.dump(task_eval, f)
+                f.write("\n")
 
     @torch.inference_mode()
     def on_train_end(self, trainer):
