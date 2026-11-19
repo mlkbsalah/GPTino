@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=TrainGPT
-#SBATCH --output=runs/.slurm/%j.out
+
 #SBATCH --time=24:00:00
 #SBATCH --partition=ai
 #SBATCH --nodes=1
@@ -10,16 +10,14 @@
 
 IMAGE=train_gym.sif
 
-RUN_DIR=runs/$(date "+%Y-%m-%d_%H-%M-%S")_job_${SLURM_JOB_ID}${RUN_SUFFIX:-}
-
-mkdir -p ${RUN_DIR}/metadata/
-
-ln -s ../.slurm/${SLURM_JOB_ID}.out ${RUN_DIR}/slurm.out
-git diff HEAD > ${RUN_DIR}/metadata/git_diff.patch
-cp -- pyproject.toml uv.lock ${RUN_DIR}/metadata/
+mkdir -p "${RUN_DIR}/metadata/"
+if [[ -z "$CHECKPOINT" ]]; then
+    git diff HEAD > "${RUN_DIR}/metadata/git_diff.patch"
+    cp -- pyproject.toml uv.lock "${RUN_DIR}/metadata/"
+fi
 
 write_meta() {
-    cat > ${RUN_DIR}/metadata/meta.json <<EOF
+    cat > "${RUN_DIR}/metadata/meta.json" <<EOF
 {
     "status": "$1",
     "start_time": "${START_TIME}",
@@ -38,15 +36,13 @@ export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$((20000 + SLURM_JOB_ID % 10000))
 export NCCL_SOCKET_IFNAME=ens18
 
-srun apptainer exec --nv --env PYTHONPATH=src ${IMAGE} \
+srun apptainer exec --nv --bind "$(realpath "$RUN_DIR")" --env PYTHONPATH=src ${IMAGE} \
         torchrun \
             --nnodes=${SLURM_NNODES} \
             --nproc_per_node="gpu" \
             --rdzv_backend=c10d \
             --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
             --rdzv_id=gpt2_job_${SLURM_JOB_ID} \
-            scripts/train_gpt.py \
-                --run_dir "${RUN_DIR}" \
-                "$@"
+            scripts/train_gpt.py "$@"
 
 [ $? -eq 0 ] && write_meta completed || write_meta failed
