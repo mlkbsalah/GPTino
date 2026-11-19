@@ -5,7 +5,7 @@ repos:
     - id: ruff-check
       args: [--fix]
       types_or: [python, pyi, toml]
-      exclude: ^uv\.lock$
+      exclude: ^(uv\.lock|run-viewer/Cargo\.lock)$
     - id: ruff-format
       types_or: [python, pyi, toml]
-      exclude: ^uv\.lock$
+      exclude: ^(uv\.lock|run-viewer/Cargo\.lock)$
