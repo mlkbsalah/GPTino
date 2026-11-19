@@ -1,11 +1,11 @@
 from pathlib import Path
 
+import tiktoken
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
-import tiktoken
 from gptino.config import (
     load_train_config,
     save_config,
@@ -58,14 +58,12 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
         "Cannot debug and resume from a checkpoint at the same time"
     )
     run_dir = Path(resume).parent.parent if resume is not None else run_dir
-    run_dir.mkdir(parents=True, exist_ok=True)
+    logger = LoggerLite(run_dir)
     config_path = run_dir / "config.yaml" if resume else config_path
     ddp_context = setup_ddp()
-
     cfg = load_train_config(config_path, debug=debug, world_size=ddp_context.world_size)
     if resume is not None:
         print(f"Resuming from {resume}, setting config to {config_path}")
-
     if ddp_context.master_process:
         save_config(cfg, run_dir / "config.yaml")
 
@@ -94,12 +92,6 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
         world_size=ddp_context.world_size,
         master_process=ddp_context.master_process,
     )
-
-    if ddp_context.master_process:
-        print(
-            f"train: {len(train_loader)} steps of {train_loader.batch_tokens} tokens | "
-            f"val: {len(val_loader)} steps of {val_loader.batch_tokens} tokens"
-        )
 
     model = GPT(GPTConfig(**cfg.model))
     model.to(ddp_context.device)
@@ -133,8 +125,6 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
             max_lr=cfg.lr_scheduler["max_lr"],
         ),
     )
-
-    logger = LoggerLite(log_dir=run_dir)
 
     trainer = TrainerLite(
         model=model,
