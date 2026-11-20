@@ -1,3 +1,4 @@
+
 from pathlib import Path
 
 import tiktoken
@@ -7,15 +8,16 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
 from gptino.config import (
+    TrainConfig,
     load_train_config,
     save_config,
-    setup_ddp,
 )
 from gptino.data.dataloader import DataLoaderLite
 from gptino.data.hellaswag import HellaSwagDataset
 from gptino.data.piqa import PIQADataset
 from gptino.evaluation.multiple_choice_evaluator import MultipleChoiceQuestionEvaluator
 from gptino.module.gpt import GPT, GPTConfig
+from gptino.parallel_config import DDPContext, setup_ddp
 from gptino.training.callbacks import (
     CheckpointCallback,
     CompleteTextCallback,
@@ -53,25 +55,14 @@ def build_downstream_callbacks(config, ddp_context, save_path):
     return [DownStreamEvaluationCallback(config["interval"], evaluators, save_path)]
 
 
-def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None):
-    assert not (debug and resume is not None), (
-        "Cannot debug and resume from a checkpoint at the same time"
-    )
-    run_dir = Path(resume).parent.parent if resume is not None else run_dir
+def train(cfg: TrainConfig, run_dir: Path, ddp_context: DDPContext, resume: Path | None = None):
     logger = LoggerLite(run_dir)
-    config_path = run_dir / "config.yaml" if resume else config_path
-    ddp_context = setup_ddp()
-    cfg = load_train_config(config_path, debug=debug, world_size=ddp_context.world_size)
-    if resume is not None:
-        print(f"Resuming from {resume}, setting config to {config_path}")
-    if ddp_context.master_process:
-        save_config(cfg, run_dir / "config.yaml")
 
     seed_everything(cfg.seed, ddp_context.device)
 
     train_loader = DataLoaderLite(
         data_dir=cfg.data_dir,
-        max_tokens=cfg.train_tokens,
+        max_tokens=cfg.run_token_budget if cfg.run_token_budget is not None else cfg.train_tokens,
         split="train",
         batch_tokens=cfg.train_batch_tokens,
         context_length=cfg.context_length,
@@ -119,7 +110,8 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
     lr_scheduler = LinearWarmupCosineDecayLR(
         optimizer=optimizer,
         cfg=LRSchedulerConfig(
-            warmup_steps=int(cfg.lr_scheduler["warmup_fraction"] * max_steps),
+            warmup_steps=(cfg.lr_scheduler["warmup_tokens"] + cfg.train_batch_tokens - 1)
+            // cfg.train_batch_tokens,
             decay_steps=max_steps,
             min_lr=cfg.lr_scheduler["min_lr"],
             max_lr=cfg.lr_scheduler["max_lr"],
@@ -156,9 +148,30 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
 
     trainer.fit(train_loader, val_loader)
 
-    if ddp_context.enabled:
-        dist.barrier()
-        dist.destroy_process_group()
+
+def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None, overrides=()):
+    if resume is not None:
+        if debug:
+            raise ValueError("Cannot resume from a checkpoint while in debug mode")
+        run_dir = Path(resume).parent.parent
+        config_path = run_dir / "config.yaml"
+    ddp_context = setup_ddp()
+    try:
+        cfg = load_train_config(
+            config_path, debug=debug, world_size=ddp_context.world_size,
+            overrides=overrides, resume=resume is not None,
+        )
+        if ddp_context.enabled and resume is not None:
+            dist.barrier() # very important since fast processing can save the new config while another may be reading it, only problemitc in resume because processes read and write the same file.
+        if ddp_context.master_process:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            if resume is not None:
+                print(f"Resuming from {resume} with config {config_path}")
+            save_config(cfg, run_dir / "config.yaml")
+        train(cfg, run_dir, ddp_context=ddp_context, resume=resume)
+    finally:
+        if ddp_context.enabled:
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":
@@ -182,8 +195,13 @@ if __name__ == "__main__":
         help="Path to checkpoint to resume from",
     )
 
+    parser.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        help="Override a config field",
+    )
     args = parser.parse_args()
 
-    if args.resume is not None and args.debug:
-        raise ValueError("Cannot resume from a checkpoint while in debug mode")
-    main(run_dir=args.run_dir, debug=args.debug, resume=args.resume)
+    main(run_dir=args.run_dir, debug=args.debug, resume=args.resume, overrides=args.overrides)

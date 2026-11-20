@@ -1,56 +1,57 @@
-import os
 from dataclasses import dataclass, replace
 
-import torch
 import yaml
-from torch.distributed import init_process_group
 
+_RESUME_PATHS = {
+    "training.run_token_budget",
+}
 
-def get_device():
-    device = "cpu"
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    print(f"using device: {device}")
-    return device
+_INT_PATH = {
+    "training.run_token_budget",
+}
+_FLOAT_PATHS = {
+    "training.lr_scheduler.min_lr",
+    "training.lr_scheduler.max_lr",
+    "training.optimizer.weight_decay",
+    "training.optimizer.grad_clip_norm",
+}
+_NULLABLE_PATHS = {
+    "training.run_token_budget",
+}
 
+def _apply_override(raw_config, override, resume):
+    path, _, text_val = override.partition("=")
+    if text_val.strip() == "":
+        raise ValueError(f"Empty override: {override}, to set to none override with \"path=none\"")
+    elif text_val.strip() == "none" and path not in _NULLABLE_PATHS:
+        raise ValueError(f"Only {_NULLABLE_PATHS} can be set to none, not {path}")
+    if resume and path not in _RESUME_PATHS:
+        raise ValueError(f"Only {_RESUME_PATHS} can be overridden on resume, not {path}")
 
-@dataclass
-class DDPContext:
-    enabled: bool
-    rank: int
-    local_rank: int
-    world_size: int
-    master_process: bool
-    device: str
+    *parents, key = path.split(".")
+    section = raw_config
+    for parent in parents:
+        section = section[parent]
+    if key not in section:
+        raise ValueError(f"Key {key} not found in {path}")
 
-
-def setup_ddp():
-    ddp = int(os.environ.get("RANK", -1)) != -1
-    if ddp:
-        assert torch.cuda.is_available()
-        init_process_group(backend="nccl")
-        ddp_rank = int(os.environ["RANK"])
-        ddp_local_rank = int(os.environ["LOCAL_RANK"])
-        ddp_world_size = int(os.environ["WORLD_SIZE"])
-        device = f"cuda:{ddp_local_rank}"
-        torch.cuda.set_device(device)
-        master_process = ddp_rank == 0
+    if path in _INT_PATH:
+        expected = int
+    elif path in _FLOAT_PATHS:
+        expected = float
     else:
-        ddp_rank = 0
-        ddp_local_rank = 0
-        ddp_world_size = 1
-        master_process = True
-        device = get_device()
-    return DDPContext(
-        enabled=ddp,
-        rank=ddp_rank,
-        local_rank=ddp_local_rank,
-        world_size=ddp_world_size,
-        master_process=master_process,
-        device=device,
-    )
+        expected = type(section[key])
+
+    value = text_val.strip()
+    if value == "none":
+        value = None
+    elif expected in (int, float, str):
+        value = expected(value)
+    else:
+        raise ValueError(f"Unexpected value type for {path}: {value}")
+
+    section[key] = value
+
 
 
 @dataclass
@@ -77,15 +78,15 @@ class TrainConfig:
 
     sample: dict
     task_evaluation: dict | None = None
+    run_token_budget: int | None = None
 
 
-def load_config(path):
+
+def load_train_config(path, debug=False, world_size=1, overrides=(), resume=False):
     with open(path) as f:
-        return yaml.safe_load(f)
-
-
-def load_train_config(path, debug=False, world_size=1):
-    raw = load_config(path)
+        raw = yaml.safe_load(f)
+    for override in overrides:
+        _apply_override(raw, override, resume)
     training = raw["training"]
     lr = training["lr_scheduler"]
     logging = training["logging"]
@@ -101,6 +102,7 @@ def load_train_config(path, debug=False, world_size=1):
         context_length=raw["model"]["context_length"],
         train_batch_tokens=training["train_batch_tokens"],
         train_tokens=int(training["train_tokens"]),
+        run_token_budget=training.get("run_token_budget"),
         val_tokens=int(training["val_tokens"]),
         lr_scheduler=lr,
         weight_decay=optimizer["weight_decay"],
@@ -123,6 +125,7 @@ def save_config(cfg: TrainConfig, path):
         "training": {
             "seed": cfg.seed,
             "train_tokens": cfg.train_tokens,
+            "run_token_budget": cfg.run_token_budget,
             "train_batch_tokens": cfg.train_batch_tokens,
             "train_micro_batch_size": cfg.train_micro_batch_size,
             "val_tokens": cfg.val_tokens,
@@ -151,6 +154,7 @@ def debug_config(cfg: TrainConfig, world_size: int) -> TrainConfig:
         cfg,
         train_batch_tokens=batch_tokens,
         train_tokens=2 * batch_tokens,
+        run_token_budget=None,
         val_tokens=cfg.val_micro_batch_size * cfg.context_length * world_size,
         validation_interval=1,
         sample_interval=1,
