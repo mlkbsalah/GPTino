@@ -126,7 +126,6 @@ class TrainerLite:
             self.flush_metrics()
 
         self._run_callbacks("on_train_end")
-        self.flush_metrics()
 
     def record_metric(self, name, value, reduce):
         if self.ddp and reduce:
