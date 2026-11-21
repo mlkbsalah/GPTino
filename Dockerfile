@@ -1,5 +1,9 @@
 FROM python:3.14.10-slim-trixie
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get clean
+
 WORKDIR /workdir
 
 RUN pip install --no-cache-dir uv
