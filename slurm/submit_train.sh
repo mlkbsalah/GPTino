@@ -16,7 +16,7 @@ while (($# > 0)); do
             ;;
         --run_dir)
             runs_root="${2:?}" # ?  error if is not set (option --run_dir not used ), :  error if is empty (used --run_dir but without an argument)
-            if [["$run_root" == -*]]; then
+            if [["$run_root" == -* ]]; then
                 echo "Expected a directory got: ${run_root}" >&2
                 exit 2
             fi
