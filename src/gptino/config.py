@@ -101,7 +101,7 @@ def load_train_config(path, debug=False, world_size=1, overrides=(), resume=Fals
         val_micro_batch_size=training["val_micro_batch_size"],
         context_length=raw["model"]["context_length"],
         train_batch_tokens=training["train_batch_tokens"],
-        train_tokens=int(training["train_tokens"]),
+        train_tokens=int(raw["data"]["train_tokens"]),
         run_token_budget=training.get("run_token_budget"),
         val_tokens=int(training["val_tokens"]),
         lr_scheduler=lr,
@@ -121,10 +121,12 @@ def load_train_config(path, debug=False, world_size=1, overrides=(), resume=Fals
 def save_config(cfg: TrainConfig, path):
     raw = {
         "model": {**cfg.model, "context_length": cfg.context_length},
-        "data": {"data_dir": cfg.data_dir},
+        "data": {
+            "data_dir": cfg.data_dir,
+            "train_tokens": cfg.train_tokens,
+        },
         "training": {
             "seed": cfg.seed,
-            "train_tokens": cfg.train_tokens,
             "run_token_budget": cfg.run_token_budget,
             "train_batch_tokens": cfg.train_batch_tokens,
             "train_micro_batch_size": cfg.train_micro_batch_size,

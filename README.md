@@ -1,5 +1,32 @@
 # GPTino
 
+## Submitting training runs with Slurm
+
+Run these commands from the repository root. The launcher forwards `--set YAML.path=value` to the trainer. For fresh runs, use dotted paths from the YAML config and repeat `--set` for each override.
+
+For a fresh benchmark, set the peak learning rate and cap the number of training tokens without shortening the learning-rate schedule:
+
+```bash
+bash slurm/submit_train.sh --label benchmark \
+    --set training.lr_scheduler.max_lr=0.0003 \
+    --set training.run_token_budget=10485760
+```
+
+`training.run_token_budget` must be an integer between `training.train_batch_tokens` and `training.train_tokens`, inclusive. Leave `training.train_tokens` at the full schedule length when comparing short runs.
+
+To resume, pass the actual checkpoint path. The launcher reuses its run directory and the trainer reads that run's `config.yaml`. The only setting you can override on resume is `training.run_token_budget`. For example, to extend the benchmark to a total of 20,971,520 tokens:
+
+```bash
+bash slurm/submit_train.sh --resume "$checkpoint" \
+    --set training.run_token_budget=20971520
+```
+
+To compare peak learning rates, pass them as positional arguments. The sweep submits one fresh job per rate under `runs/lr-sweep/`, labeled `lr-<rate>`:
+
+```bash
+bash slurm/sweep_lr.sh 0.0001 0.0003 0.0006
+```
+
 ## Understanding the transformer architecture
 
 ### The masked multihead attention

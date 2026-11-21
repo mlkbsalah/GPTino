@@ -63,6 +63,8 @@ class TrainerLite:
         self.callbacks = [TrainSummaryCallback()] + callbacks
         self.ddp_context = ddp_context
         self.device = ddp_context.device
+        self.device_type = torch.device(self.device).type
+        self.use_bf16 = self.device_type != "cuda" or torch.cuda.is_bf16_supported(including_emulation=False)
         self.ddp = ddp_context.enabled
         self.gradient_clip_norm = gradient_clip_norm
 
@@ -178,7 +180,7 @@ class TrainerLite:
         x, y = batch
         x, y = x.to(self.device), y.to(self.device)
         with torch.autocast(
-            device_type=torch.device(self.device).type, dtype=torch.bfloat16
+            device_type=self.device_type, dtype=torch.bfloat16, enabled=self.use_bf16
         ):
             logits = self.model(x)
             loss = torch.nn.functional.cross_entropy(
