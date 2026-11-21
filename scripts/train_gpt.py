@@ -86,8 +86,11 @@ def train(cfg: TrainConfig, run_dir: Path, ddp_context: DDPContext, resume: Path
 
     model = GPT(GPTConfig(**cfg.model))
     model.to(ddp_context.device)
+    use_cuda = torch.device(ddp_context.device).type == "cuda"
     if ddp_context.enabled:
         model = DDP(model, device_ids=[ddp_context.local_rank])
+    if use_cuda:
+        model.compile()  # In-place: checkpoint keys don't gain an _orig_mod prefix.
 
     optimizer = torch.optim.AdamW(
         params=[
@@ -100,21 +103,23 @@ def train(cfg: TrainConfig, run_dir: Path, ddp_context: DDPContext, resume: Path
                 "weight_decay": 0.0,
             },
         ],
-        lr=cfg.lr_scheduler["min_lr"],
+        lr=cfg.lr_scheduler["initial_lr"],
         betas=(0.9, 0.95),
         eps=1e-8,
+        fused=True if use_cuda else None,
         weight_decay=cfg.weight_decay,
     )
 
-    max_steps = len(train_loader)
+    schedule_steps = cfg.train_tokens // cfg.train_batch_tokens
     lr_scheduler = LinearWarmupCosineDecayLR(
         optimizer=optimizer,
         cfg=LRSchedulerConfig(
             warmup_steps=(cfg.lr_scheduler["warmup_tokens"] + cfg.train_batch_tokens - 1)
             // cfg.train_batch_tokens,
-            decay_steps=max_steps,
-            min_lr=cfg.lr_scheduler["min_lr"],
-            max_lr=cfg.lr_scheduler["max_lr"],
+            decay_steps=schedule_steps,
+            peak_lr=cfg.lr_scheduler["peak_lr"],
+            initial_lr=cfg.lr_scheduler["initial_lr"],
+            final_lr=cfg.lr_scheduler["final_lr_fraction"] * cfg.lr_scheduler["peak_lr"],
         ),
     )
 

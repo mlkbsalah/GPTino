@@ -8,8 +8,9 @@ import torch
 class LRSchedulerConfig:
     warmup_steps: int
     decay_steps: int
-    min_lr: float
-    max_lr: float
+    peak_lr: float
+    initial_lr: float
+    final_lr: float
 
 
 class LinearWarmupCosineDecayLR(torch.optim.lr_scheduler.LRScheduler):
@@ -31,14 +32,14 @@ class LinearWarmupCosineDecayLR(torch.optim.lr_scheduler.LRScheduler):
 
     def compute_lr(self, step):
         if step < self.cfg.warmup_steps:
-            return (self.cfg.max_lr - self.cfg.min_lr) * (
+            return (self.cfg.peak_lr - self.cfg.initial_lr) * (
                 step / self.cfg.warmup_steps
-            ) + self.cfg.min_lr
+            ) + self.cfg.initial_lr
         if step > self.cfg.decay_steps:
-            return self.cfg.min_lr
+            return self.cfg.final_lr
         decay_ratio = (step - self.cfg.warmup_steps) / (
             self.cfg.decay_steps - self.cfg.warmup_steps
         )
         assert 0 <= decay_ratio <= 1
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-        return self.cfg.min_lr + coeff * (self.cfg.max_lr - self.cfg.min_lr)
+        return self.cfg.final_lr + coeff * (self.cfg.peak_lr - self.cfg.final_lr)
