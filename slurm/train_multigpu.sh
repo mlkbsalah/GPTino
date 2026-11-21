@@ -45,4 +45,10 @@ srun apptainer exec --nv --bind "$(realpath "$RUN_DIR")" --env PYTHONPATH=src ${
             --rdzv_id=gpt2_job_${SLURM_JOB_ID} \
             scripts/train_gpt.py "$@"
 
-[ $? -eq 0 ] && write_meta completed || write_meta failed
+status=$?
+if ((status == 0)); then
+    write_meta completed
+else
+    write_meta failed
+    exit $status
+fi
