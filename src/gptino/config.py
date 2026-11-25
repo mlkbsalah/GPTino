@@ -1,4 +1,5 @@
 from dataclasses import dataclass, replace
+from math import isfinite
 
 import yaml
 
@@ -82,6 +83,41 @@ class TrainConfig:
 
 
 
+def validate(cfg: TrainConfig) -> None:
+    def positive_int(name, value):
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"{name} must be a positive integer, got {value!r}")
+
+    def nonnegative_number(name, value):
+        if type(value) not in (int, float) or not isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be a finite nonnegative number, got {value!r}")
+
+
+    for name in ("context_length", "train_tokens", "train_batch_tokens", "val_tokens",
+                 "train_micro_batch_size", "val_micro_batch_size", "validation_interval",
+                 "sample_interval", "save_interval"):
+        positive_int(name, getattr(cfg, name))
+
+    if cfg.train_tokens < cfg.train_batch_tokens:
+        raise ValueError("train_tokens must cover at least one training batch")
+    if cfg.run_token_budget is not None:
+        positive_int("run_token_budget", cfg.run_token_budget)
+        if cfg.run_token_budget < cfg.train_batch_tokens:
+            raise ValueError("run_token_budget must cover at least one training batch")
+    if cfg.val_tokens < cfg.val_micro_batch_size * cfg.context_length:
+        raise ValueError("val_tokens must cover at least one validation micro-batch")
+
+    nonnegative_number("weight_decay", cfg.weight_decay)
+    nonnegative_number("grad_clip_norm", cfg.grad_clip_norm)
+    if not isinstance(cfg.lr_scheduler, dict):
+        raise ValueError("lr_scheduler must be a dict")
+    for key in ("initial_lr", "peak_lr", "final_lr_fraction"):
+        nonnegative_number(f"lr_scheduler.{key}", cfg.lr_scheduler.get(key))
+    warmup = cfg.lr_scheduler.get("warmup_tokens")
+    if type(warmup) is not int or warmup < 0:
+        raise ValueError("lr_scheduler.warmup_tokens must be a nonnegative integer")
+
+
 def load_train_config(path, debug=False, world_size=1, overrides=(), resume=False):
     with open(path) as f:
         raw = yaml.safe_load(f)
@@ -115,7 +151,10 @@ def load_train_config(path, debug=False, world_size=1, overrides=(), resume=Fals
         task_evaluation=training.get("task_evaluation"),
     )
 
-    return debug_config(cfg, world_size) if debug else cfg
+    if debug:
+        cfg = debug_config(cfg, world_size)
+    validate(cfg)
+    return cfg
 
 
 def save_config(cfg: TrainConfig, path):
@@ -150,7 +189,7 @@ def save_config(cfg: TrainConfig, path):
         yaml.safe_dump(raw, f, indent=4, sort_keys=False)
 
 
-def debug_config(cfg: TrainConfig, world_size: int) -> TrainConfig:
+def debug_config(cfg: TrainConfig, world_size: int=1) -> TrainConfig:
     batch_tokens = 2 * cfg.train_micro_batch_size * cfg.context_length * world_size
     return replace(
         cfg,
