@@ -11,7 +11,16 @@ train_args=()
 while (($# > 0)); do
     case "$1" in
         -h|--help)
-            echo "Usage: WIP"
+            cat << "EOF"
+Usage:
+New run: bash submit_train.sh --run_dir <run_dir> [--label <label>]
+Resume: bash submit_train.sh --resume <checkpoint_path> [--label <label>]
+
+--run_dir <run_dir>  Run directory for the new run
+--resume <checkpoint_path>  Path to the checkpoint to resume from
+--label <label>  Label suffix for the run
+--debug  Run in debug mode
+EOF
             exit 0
             ;;
         --run_dir)
