@@ -166,7 +166,7 @@ def main(config_path=CONFIG_PATH, run_dir=Path("runs"), debug=False, resume=None
             config_path, debug=debug, world_size=ddp_context.world_size,
             overrides=overrides, resume=resume is not None,
         )
-        if ddp_context.enabled and resume is not None:
+        if ddp_context.enabled:
             dist.barrier() # very important since fast processing can save the new config while another may be reading it, only problemitc in resume because processes read and write the same file.
         if ddp_context.master_process:
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -207,6 +207,13 @@ if __name__ == "__main__":
         default=[],
         help="Override a config field",
     )
+
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(CONFIG_PATH),
+        help="Path to config file",
+    )
     args = parser.parse_args()
 
-    main(run_dir=args.run_dir, debug=args.debug, resume=args.resume, overrides=args.overrides)
+    main(config_path=args.config, run_dir=args.run_dir, debug=args.debug, resume=args.resume, overrides=args.overrides)
