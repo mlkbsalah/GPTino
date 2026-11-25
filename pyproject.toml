@@ -12,6 +12,7 @@ authors = [
 ]
 dependencies = [
     "datasets>=5.2.0",
+    "matplotlib>=3.11.2",
     "numpy>=2.5.5",
     "pandas>=3.1.1",
     "pyaml>=26.7.0",
