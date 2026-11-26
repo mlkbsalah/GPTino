@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 from torch import nn
@@ -16,6 +17,8 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
+    activation: Literal["gelu", "swiglu"] = "gelu"
+    normalization: Literal["rmsnorm", "layernorm"] = "layernorm"
 
 
 class GPT(nn.Module):
@@ -28,7 +31,7 @@ class GPT(nn.Module):
                 "wte": nn.Embedding(config.vocab_size, config.n_embd),
                 "wpe": nn.Embedding(config.context_length, config.n_embd),
                 "h": nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-                "ln_f": nn.LayerNorm(config.n_embd),
+                "ln_f": nn.RMSNorm(config.n_embd) if config.normalization == "rmsnorm" else nn.LayerNorm(config.n_embd),
             }
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)

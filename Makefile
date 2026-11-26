@@ -13,9 +13,9 @@ build-and-send: build-docker send
 build-apptainer:
 	sbatch --job-name=build-apptainer \
 		--time=1:00:00 \
-		--mem=24G \
-		--cpus-per-task=12 \
-		--partition=ai \
+		--mem=16G \
+		--cpus-per-task=4 \
+		--partition=cpu \
 		--wrap="apptainer build $(CONTAINER_NAME).sif docker-archive://$(CONTAINER_NAME).tar"
 
 

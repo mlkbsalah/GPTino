@@ -33,8 +33,6 @@ def set_rng_state(state, device):
     device = torch.device(device)
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
-    # Checkpoint map_location can move RNG tensors to the training device,
-    # but the RNG setters require CPU byte tensors.
     torch.set_rng_state(state["torch"].cpu())
     if device.type == "cuda":
         torch.cuda.set_rng_state(state["cuda"].cpu(), device)
