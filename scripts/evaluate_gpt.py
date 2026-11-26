@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
-
 from gptino.data.hellaswag import HellaSwagDataset
 from gptino.data.piqa import PIQADataset
+from torch.utils.data import DataLoader
+
 from gptino.evaluation.multiple_choice_evaluator import MultipleChoiceQuestionEvaluator
 from gptino.module.gpt import GPT
 

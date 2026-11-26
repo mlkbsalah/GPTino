@@ -4,6 +4,8 @@ from pathlib import Path
 import tiktoken
 import torch
 import torch.distributed as dist
+from gptino.data.hellaswag import HellaSwagDataset
+from gptino.data.piqa import PIQADataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
@@ -13,8 +15,6 @@ from gptino.config import (
     save_config,
 )
 from gptino.data.dataloader import DataLoaderLite
-from gptino.data.hellaswag import HellaSwagDataset
-from gptino.data.piqa import PIQADataset
 from gptino.evaluation.multiple_choice_evaluator import MultipleChoiceQuestionEvaluator
 from gptino.module.gpt import GPT, GPTConfig
 from gptino.parallel_config import DDPContext, setup_ddp
