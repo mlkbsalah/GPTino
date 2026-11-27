@@ -11,8 +11,9 @@ _INT_PATH = {
     "training.run_token_budget",
 }
 _FLOAT_PATHS = {
-    "training.lr_scheduler.min_lr",
-    "training.lr_scheduler.max_lr",
+    "training.lr_scheduler.initial_lr",
+    "training.lr_scheduler.peak_lr",
+    "training.lr_scheduler.final_lr",
     "training.optimizer.weight_decay",
     "training.optimizer.grad_clip_norm",
 }
@@ -57,8 +58,8 @@ def _apply_override(raw_config, override, resume):
 
 @dataclass
 class TrainConfig:
-    data_dir: str
     model: dict
+    data_dir: str
     seed: int
     train_tokens: int
     train_micro_batch_size: int
@@ -67,7 +68,10 @@ class TrainConfig:
     val_micro_batch_size: int
     context_length: int
 
-    lr_scheduler: dict
+    peak_lr: float
+    initial_lr: float
+    final_lr: float
+    warmup_steps: int
 
     weight_decay: float
     grad_clip_norm: float
@@ -92,7 +96,6 @@ def validate(cfg: TrainConfig) -> None:
         if type(value) not in (int, float) or not isfinite(value) or value < 0:
             raise ValueError(f"{name} must be a finite nonnegative number, got {value!r}")
 
-
     for name in ("context_length", "train_tokens", "train_batch_tokens", "val_tokens",
                  "train_micro_batch_size", "val_micro_batch_size", "validation_interval",
                  "sample_interval", "save_interval"):
@@ -109,27 +112,20 @@ def validate(cfg: TrainConfig) -> None:
 
     nonnegative_number("weight_decay", cfg.weight_decay)
     nonnegative_number("grad_clip_norm", cfg.grad_clip_norm)
-    if not isinstance(cfg.lr_scheduler, dict):
-        raise ValueError("lr_scheduler must be a dict")
-    for key in ("initial_lr", "peak_lr", "final_lr_fraction"):
-        nonnegative_number(f"lr_scheduler.{key}", cfg.lr_scheduler.get(key))
-    warmup = cfg.lr_scheduler.get("warmup_tokens")
-    if type(warmup) is not int or warmup < 0:
-        raise ValueError("lr_scheduler.warmup_tokens must be a nonnegative integer")
+    for key in ("initial_lr", "peak_lr", "final_lr"):
+        nonnegative_number(key, getattr(cfg, key))
+    if type(cfg.warmup_steps) is not int or cfg.warmup_steps < 0:
+        raise ValueError("lr_scheduler.warmup_steps must be a nonnegative integer")
 
 
-def load_train_config(path, debug=False, world_size=1, overrides=(), resume=False):
-    with open(path) as f:
-        raw = yaml.safe_load(f)
-    for override in overrides:
-        _apply_override(raw, override, resume)
+def from_nested_dict(raw: dict) -> TrainConfig:
     training = raw["training"]
     lr = training["lr_scheduler"]
     logging = training["logging"]
     optimizer = training["optimizer"]
     sample = training["sample"]
 
-    cfg = TrainConfig(
+    return TrainConfig(
         data_dir=raw["data"]["data_dir"],
         model=raw["model"],
         seed=training["seed"],
@@ -140,7 +136,10 @@ def load_train_config(path, debug=False, world_size=1, overrides=(), resume=Fals
         train_tokens=int(raw["data"]["train_tokens"]),
         run_token_budget=training.get("run_token_budget"),
         val_tokens=int(training["val_tokens"]),
-        lr_scheduler=lr,
+        initial_lr=lr["initial_lr"],
+        peak_lr=lr["peak_lr"],
+        final_lr=lr["final_lr"],
+        warmup_steps=lr["warmup_steps"],
         weight_decay=optimizer["weight_decay"],
         grad_clip_norm=optimizer["grad_clip_norm"],
         validation_interval=logging["validation_interval"],
@@ -151,14 +150,9 @@ def load_train_config(path, debug=False, world_size=1, overrides=(), resume=Fals
         task_evaluation=training.get("task_evaluation"),
     )
 
-    if debug:
-        cfg = debug_config(cfg, world_size)
-    validate(cfg)
-    return cfg
 
-
-def save_config(cfg: TrainConfig, path):
-    raw = {
+def to_nested_dict(cfg: TrainConfig) -> dict:
+    return {
         "model": {**cfg.model, "context_length": cfg.context_length},
         "data": {
             "data_dir": cfg.data_dir,
@@ -171,7 +165,12 @@ def save_config(cfg: TrainConfig, path):
             "train_micro_batch_size": cfg.train_micro_batch_size,
             "val_tokens": cfg.val_tokens,
             "val_micro_batch_size": cfg.val_micro_batch_size,
-            "lr_scheduler": cfg.lr_scheduler,
+            "lr_scheduler": {
+                "initial_lr": cfg.initial_lr,
+                "peak_lr": cfg.peak_lr,
+                "final_lr": cfg.final_lr,
+                "warmup_steps": cfg.warmup_steps,
+            },
             "optimizer": {
                 "weight_decay": cfg.weight_decay,
                 "grad_clip_norm": cfg.grad_clip_norm,
@@ -185,6 +184,22 @@ def save_config(cfg: TrainConfig, path):
             "task_evaluation": cfg.task_evaluation,
         },
     }
+
+
+def load_train_config(path, debug=False, world_size=1, overrides=(), resume=False):
+    with open(path) as f:
+        raw = yaml.safe_load(f)
+    for override in overrides:
+        _apply_override(raw, override, resume)
+    cfg = from_nested_dict(raw)
+    if debug:
+        cfg = debug_config(cfg, world_size)
+    validate(cfg)
+    return cfg
+
+
+def save_config(cfg: TrainConfig, path):
+    raw = to_nested_dict(cfg)
     with open(path, "w") as f:
         yaml.safe_dump(raw, f, indent=4, sort_keys=False)
 

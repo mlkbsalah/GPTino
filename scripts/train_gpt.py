@@ -4,8 +4,8 @@ from pathlib import Path
 import tiktoken
 import torch
 import torch.distributed as dist
-from gptino.data.hellaswag import HellaSwagDataset
-from gptino.data.piqa import PIQADataset
+from gptino.data.datasets.hellaswag import HellaSwagDataset
+from gptino.data.datasets.piqa import PIQADataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
@@ -103,7 +103,7 @@ def train(cfg: TrainConfig, run_dir: Path, ddp_context: DDPContext, resume: Path
                 "weight_decay": 0.0,
             },
         ],
-        lr=cfg.lr_scheduler["initial_lr"],
+        lr=cfg.initial_lr,
         betas=(0.9, 0.95),
         eps=1e-8,
         fused=True if use_cuda else None,
@@ -114,12 +114,11 @@ def train(cfg: TrainConfig, run_dir: Path, ddp_context: DDPContext, resume: Path
     lr_scheduler = LinearWarmupCosineDecayLR(
         optimizer=optimizer,
         cfg=LRSchedulerConfig(
-            warmup_steps=(cfg.lr_scheduler["warmup_tokens"] + cfg.train_batch_tokens - 1)
-            // cfg.train_batch_tokens,
+            warmup_steps=cfg.warmup_steps,
             decay_steps=schedule_steps,
-            peak_lr=cfg.lr_scheduler["peak_lr"],
-            initial_lr=cfg.lr_scheduler["initial_lr"],
-            final_lr=cfg.lr_scheduler["final_lr_fraction"] * cfg.lr_scheduler["peak_lr"],
+            peak_lr=cfg.peak_lr,
+            initial_lr=cfg.initial_lr,
+            final_lr=cfg.final_lr,
         ),
     )
 

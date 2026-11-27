@@ -27,4 +27,4 @@ run-interactive:
 		--nodes=2 \
 		--partition=ai \
 		--gres=gpu:h100:2 \
-		--pty apptainer shell --nv $(CONTAINER_NAME).sif
+		--pty apptainer shell --nv --env PYTHONPATH=src $(CONTAINER_NAME).sif
