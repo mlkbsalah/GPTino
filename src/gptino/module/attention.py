@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .rope import RoPE
+
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
@@ -17,6 +19,7 @@ class CausalSelfAttention(nn.Module):
                 1, 1, config.context_length, config.context_length
             ),
         )
+        self.rope = RoPE(config.n_embd // config.n_head) if config.pos_encoding == "rope" else None
 
     def forward(self, x: torch.Tensor):
         """forward throught the attention block x: (B, T, C)"""  # what is C ? : C is
@@ -36,6 +39,10 @@ class CausalSelfAttention(nn.Module):
         # att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
         # att = F.softmax(wei, dim=-1)
         # out = wei @ v  # (B, n_head, T, T) @ (B, n_head, T, hs) -> (B, n_head, T, hs)
+        if self.rope is not None:
+            q = self.rope(q)
+            k = self.rope(k)
+
         out = F.scaled_dot_product_attention(
             q, k, v, is_causal=True
         )  # -> (B, n_head, T, hs)

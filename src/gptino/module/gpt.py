@@ -19,6 +19,7 @@ class GPTConfig:
     n_embd: int = 768
     activation: Literal["gelu", "swiglu"] = "gelu"
     normalization: Literal["rmsnorm", "layernorm"] = "layernorm"
+    pos_encoding: Literal["rope", "learned"] = "learned"
 
 
 class GPT(nn.Module):
@@ -29,11 +30,13 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(
             {
                 "wte": nn.Embedding(config.vocab_size, config.n_embd),
-                "wpe": nn.Embedding(config.context_length, config.n_embd),
                 "h": nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 "ln_f": nn.RMSNorm(config.n_embd) if config.normalization == "rmsnorm" else nn.LayerNorm(config.n_embd),
             }
         )
+        if config.pos_encoding == "learned":
+            self.transformer["wpe"] = nn.Embedding(config.context_length, config.n_embd)
+
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         self.transformer["wte"].weight = self.lm_head.weight
@@ -55,10 +58,11 @@ class GPT(nn.Module):
         assert T <= self.config.context_length, (
             f"Cannot forward sequence of length {T}, context length is only {self.config.context_length}"
         )
-        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
-        pos_emb = self.transformer["wpe"](pos)
-        tok_emb = self.transformer["wte"](idx)
-        x = tok_emb + pos_emb[None, :, :]  # broadcast to (B, T, C) and add
+
+        x = self.transformer["wte"](idx)
+        if self.config.pos_encoding == "learned":
+            pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+            x = x + self.transformer["wpe"](pos)[None, :, :]  # broadcast to (B, T, C) and add
 
         for block in self.transformer["h"]:  # type: ignore
             x = block(x)
@@ -68,8 +72,6 @@ class GPT(nn.Module):
 
         return logits
 
-    # def training_step():
-    #     pass
 
     def generate(self, start, max_new_tokens, top_k=None, rng=None):
         idx = start if start.dim() == 2 else start.unsqueeze(0)
